@@ -1,0 +1,125 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { requireAuth } from "@/lib/auth";
+import { readJson, badJson } from "@/lib/body";
+
+interface NewIngredient {
+  name?: string;
+  id?: number;
+  amount?: number;
+  unit?: string;
+  note?: string;
+}
+
+export async function GET(req: NextRequest) {
+  const denied = await requireAuth();
+  if (denied) return denied;
+  const q = req.nextUrl.searchParams.get("q") || "";
+  const tag = req.nextUrl.searchParams.get("tag");
+  const fav = req.nextUrl.searchParams.get("fav");
+  const includeArchived = req.nextUrl.searchParams.get("archived") === "1";
+
+  let sql = `
+    SELECT r.*, GROUP_CONCAT(t.name, '|') AS tags
+    FROM recipe r
+    LEFT JOIN recipe_tag rt ON rt.recipe_id = r.id
+    LEFT JOIN tag t ON t.id = rt.tag_id
+    WHERE r.archived = ?`;
+  const params: Array<string | number> = [includeArchived ? 1 : 0];
+  if (q) {
+    sql += " AND r.title LIKE ?";
+    params.push(`%${q}%`);
+  }
+  if (fav === "1") sql += " AND r.favorite = 1";
+  if (tag) {
+    sql += " AND r.id IN (SELECT recipe_id FROM recipe_tag WHERE tag_id = ?)";
+    params.push(Number(tag));
+  }
+  sql += " GROUP BY r.id ORDER BY r.favorite DESC, r.title COLLATE NOCASE";
+  const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+  return NextResponse.json(
+    rows.map((r) => ({
+      ...r,
+      slots: String(r.slots ?? "B,M,A,S").split(",").filter(Boolean),
+      tags: ((r.tags as string) || "").split("|").filter(Boolean),
+    }))
+  );
+}
+
+export async function POST(req: NextRequest) {
+  const denied = await requireAuth();
+  if (denied) return denied;
+  const raw = await readJson(req);
+  if (raw === null) return badJson;
+  const body = raw as {
+    title: string;
+    description?: string;
+    kcal?: number;
+    p?: number;
+    c?: number;
+    f?: number;
+    favorite?: boolean;
+    ingredients?: NewIngredient[];
+    steps?: string[];
+    tags?: string[];
+    slots?: string[];
+  };
+  if (!body.title?.trim())
+    return NextResponse.json({ error: "Titel fehlt" }, { status: 400 });
+
+  const upsertIng = (name: string, category?: string): number => {
+    const n = name.trim();
+    const row = db.prepare("SELECT id FROM ingredient WHERE name = ?").get(n) as
+      | { id: number }
+      | undefined;
+    if (row) return Number(row.id);
+    const info = db
+      .prepare("INSERT INTO ingredient(name, category, unit_default) VALUES (?,?,?)")
+      .run(n, category || "Trockenwaren", "g");
+    return Number(info.lastInsertRowid);
+  };
+  const upsertTag = (name: string): number => {
+    const n = name.trim();
+    const row = db.prepare("SELECT id FROM tag WHERE name = ?").get(n) as
+      | { id: number }
+      | undefined;
+    if (row) return Number(row.id);
+    const info = db.prepare("INSERT INTO tag(name) VALUES (?)").run(n);
+    return Number(info.lastInsertRowid);
+  };
+
+  const tx = db.transaction(() => {
+    const id = Number(
+      db
+        .prepare(
+          "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, favorite, slots) VALUES (?,?,?,?,?,?,?,?)"
+        )
+        .run(
+          body.title.trim(),
+          body.description || null,
+          body.kcal ?? null,
+          body.p ?? null,
+          body.c ?? null,
+          body.f ?? null,
+          body.favorite ? 1 : 0,
+          (body.slots?.length ? body.slots : ["B", "M", "A", "S"]).join(",")
+        )
+        .lastInsertRowid
+    );
+    body.ingredients?.forEach((ing, i) => {
+      if (!ing.name?.trim() && ing.id == null) return;
+      const ingId = ing.id ?? upsertIng(ing.name!);
+      db.prepare(
+        "INSERT INTO recipe_ingredient(recipe_id, ingredient_id, amount, unit, note, sort) VALUES (?,?,?,?,?,?)"
+      ).run(id, ingId, ing.amount ?? null, ing.unit || null, ing.note || null, i);
+    });
+    body.steps?.forEach((s, i) => {
+      if (s.trim())
+        db.prepare("INSERT INTO step(recipe_id, text, sort) VALUES (?,?,?)").run(id, s.trim(), i);
+    });
+    for (const t of body.tags ?? []) if (t.trim()) db.prepare("INSERT OR IGNORE INTO recipe_tag(recipe_id, tag_id) VALUES (?,?)").run(id, upsertTag(t));
+    return id;
+  });
+  const id = tx();
+  return NextResponse.json({ id });
+}

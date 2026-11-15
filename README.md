@@ -1,36 +1,89 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mealplan — Meal-Prep-Planer
 
-## Getting Started
+Web-App zum Planen der Meal-Prep-Woche: Rezepte mit Makros pro Portion,
+intelligente Rezept-Kombination für zwei Personen, Einkaufsliste mit
+Zutaten-Deduplizierung. Läuft als einzelner Node-Prozess auf einem LXC —
+kein Docker, kein Root.
 
-First, run the development server:
+## Installation (2 Befehle)
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/jbecker-it/mealplan.git
+cd mealplan && bash install.sh
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Der Installer prüft Node.js (installiert es bei Bedarf automatisch nach
+`~/.local/node`, ohne Root), installiert die Abhängigkeiten, baut die App
+und startet den Server auf **Port 3100**.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Danach: Browser öffnen → `http://<server-ip>:3100` → beim ersten Start das
+App-Passwort wählen (einmalig, im Browser — kein Terminal-Input nötig).
+Fertig.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Zum Aktualisieren:
 
-## Learn More
+```bash
+cd mealplan && git pull && bash install.sh
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Alltag
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+./mealplan.sh status     # läuft sie?
+./mealplan.sh stop       # stoppen
+./mealplan.sh start      # starten
+./mealplan.sh restart    # neu starten
+./mealplan.sh logs       # letztes Log
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Funktionen
 
-## Deploy on Vercel
+- **Zwei Profile** mit getrennten Makro-Zielen (kcal / Protein / KH / Fett)
+  und pro-Slot kcal-Anteilen (Frühstück / Mittag / Abend / Snack)
+- **Rezepte** per Text-Import (Makros, Zutaten, Zubereitung) oder
+  manuell — mit Tags, Favoriten und **Kategorien**
+  (Frühstück / Mittag / Abend / Snack — je Rezept wählbar, Default: alle)
+- **Wochenplan 2×2**: Template A und B je 7 Tage, jede zweite Woche
+  rotierend — gleiche Rezepte an jedem Wochentag, zwei Varianten
+- Pro Slot wählbar: **gemeinsam** (eine Portion geteilt) oder
+  **getrennt** (jeder eigene Rezeptvorschlag)
+- Portionsgrößen: 0.5 / 1 / 1.5 — keine freie Skalierung
+- **Einkaufsliste** aus dem Plan, Zutaten als einzigartige Entitäten
+  (Kein Doppelzählen durch Alias-Auflösung)
+- Ein gemeinsames App-Passwort (1 Haushalt), Server-Sessions
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Rezept-Format (Text-Import)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+# Kokos-Curry mit Reis
+Makros: 640 kcal | 30 g Protein | 70 g KH | 25 g Fett
+Slot: Mittag, Abend          ← optional, Default: Frühstück, Mittag, Abend, Snack
+Tags: schnell, vegan
+Zutaten:
+- 200 g Reis
+- 400 g Kokosmilch
+Zubereitung:
+1. Reis kochen.
+2. Curry anrühren.
+```
+
+## Daten & Backup
+
+Alle Daten (Rezepte, Profile, Plan, Einkaufsliste, Auth) liegen in einer
+einzigen SQLite-Datei:
+
+```
+data/mealplan.db
+```
+
+**Backup = diese eine Datei kopieren** (am besten während die App gestoppt
+ist: `./mealplan.sh stop` → Datei kopieren → `start`).
+Bei einem Umzug: Datei auf dem neuen System an denselben Ort legen,
+fertig — der Rest ist im Git-Repo.
+
+## Betrieb
+
+- Node.js ≥ 20 (Installer besorgt es bei Bedarf)
+- Port 3100 (via `MP_PORT=8080 bash install.sh` änderbar)
+- Logs: `logs/server.log`
+- Kein Root, kein Docker, keine Systemdienste nötig
