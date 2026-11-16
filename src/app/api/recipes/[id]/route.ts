@@ -67,6 +67,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     "protein_g",
     "carbs_g",
     "fat_g",
+    "sugar_g",
+    "salt_g",
     "favorite",
     "archived",
   ] as const) {

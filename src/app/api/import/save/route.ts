@@ -73,7 +73,7 @@ export async function saveParsed(
       const rid = Number(
         db
           .prepare(
-            "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, slots) VALUES (?,?,?,?,?,?,?)"
+            "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, sugar_g, salt_g, slots) VALUES (?,?,?,?,?,?,?,?,?)"
           )
           .run(
             rec.title,
@@ -82,6 +82,8 @@ export async function saveParsed(
             rec.macros!.p ?? null,
             rec.macros!.c ?? null,
             rec.macros!.f ?? null,
+            rec.macros!.sugar ?? null,
+            rec.macros!.salt ?? null,
             (rec.slots?.length ? rec.slots : ["B", "M", "A", "S"]).join(",")
           )
           .lastInsertRowid

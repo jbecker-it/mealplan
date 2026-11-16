@@ -44,6 +44,8 @@ export async function PATCH(req: NextRequest) {
     p_target?: number;
     c_target?: number;
     f_target?: number;
+    sugar_target?: number;
+    salt_target?: number;
     split?: { B: number; M: number; A: number; S: number };
     tag_include?: number[];
     tag_exclude?: number[];
@@ -51,6 +53,7 @@ export async function PATCH(req: NextRequest) {
   if (!body.id) return NextResponse.json({ error: "id fehlt" }, { status: 400 });
   db.prepare(
     `UPDATE profile SET name = ?, kcal_target = ?, p_target = ?, c_target = ?, f_target = ?,
+     sugar_target = ?, salt_target = ?,
      slot_split = ?, tag_include = ?, tag_exclude = ? WHERE id = ?`
   ).run(
     body.name,
@@ -58,6 +61,8 @@ export async function PATCH(req: NextRequest) {
     body.p_target,
     body.c_target,
     body.f_target,
+    body.sugar_target ?? 0,
+    body.salt_target ?? 0,
     body.split ? JSON.stringify(body.split) : null,
     body.tag_include ? JSON.stringify(body.tag_include) : null,
     body.tag_exclude ? JSON.stringify(body.tag_exclude) : null,

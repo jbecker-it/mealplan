@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!rec) return NextResponse.json({ error: "Rezept nicht gefunden" }, { status: 404 });
 
   const upd = db.prepare(
-    `UPDATE plan_meal SET recipe_id = ?, servings = ?, kcal = ?, p = ?, c = ?, f = ?
+    `UPDATE plan_meal SET recipe_id = ?, servings = ?, kcal = ?, p = ?, c = ?, f = ?, sugar = ?, salt = ?
      WHERE week_key = ? AND day = ? AND profile_id = ? AND slot = ?`
   );
 
@@ -38,6 +38,8 @@ export async function POST(req: NextRequest) {
       Number(rec.protein_g ?? 0) * body.servings,
       Number(rec.carbs_g ?? 0) * body.servings,
       Number(rec.fat_g ?? 0) * body.servings,
+      Number(rec.sugar_g ?? 0) * body.servings,
+      Number(rec.salt_g ?? 0) * body.servings,
       body.week, body.day, body.profileId, body.slot
     );
     // Gemeinsamer Slot (M/A): andere Person bekommt dasselbe Rezept (eigene Größe bleibt)
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
       }>;
       for (const o of other) {
         db.prepare(
-          `UPDATE plan_meal SET recipe_id = ?, kcal = ?, p = ?, c = ?, f = ?
+          `UPDATE plan_meal SET recipe_id = ?, kcal = ?, p = ?, c = ?, f = ?, sugar = ?, salt = ?
            WHERE week_key = ? AND day = ? AND slot = ? AND profile_id = ?`
         ).run(
           body.recipeId,
@@ -60,6 +62,8 @@ export async function POST(req: NextRequest) {
           Number(rec.protein_g ?? 0) * o.servings,
           Number(rec.carbs_g ?? 0) * o.servings,
           Number(rec.fat_g ?? 0) * o.servings,
+          Number(rec.sugar_g ?? 0) * o.servings,
+          Number(rec.salt_g ?? 0) * o.servings,
           body.week, body.day, body.slot, o.profile_id
         );
       }

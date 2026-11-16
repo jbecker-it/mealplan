@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS profile (
   p_target REAL,
   c_target REAL,
   f_target REAL,
+  sugar_target REAL NOT NULL DEFAULT 0,
+  salt_target REAL NOT NULL DEFAULT 0,
   slot_split TEXT,
   tag_include TEXT,
   tag_exclude TEXT,
@@ -46,6 +48,8 @@ CREATE TABLE IF NOT EXISTS recipe (
   protein_g REAL,
   carbs_g REAL,
   fat_g REAL,
+  sugar_g REAL,
+  salt_g REAL,
   favorite INTEGER DEFAULT 0,
   archived INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
@@ -91,7 +95,9 @@ CREATE TABLE IF NOT EXISTS plan_meal (
   kcal REAL,
   p REAL,
   c REAL,
-  f REAL
+  f REAL,
+  sugar REAL DEFAULT 0,
+  salt REAL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_plan_week ON plan_meal(week_key, day, profile_id);
 
@@ -124,6 +130,21 @@ function createDb(): DbInstance {
   } catch {
     // Spalte existiert bereits
   }
+  // Migration: Zucker + Salz als zusätzliche Makros
+  // (SQLite kennt kein "ADD COLUMN IF NOT EXISTS" → try/catch)
+  const addCol = (stmt: string) => {
+    try {
+      d.exec(stmt);
+    } catch {
+      // Spalte existiert bereits
+    }
+  };
+  addCol("ALTER TABLE recipe ADD COLUMN sugar_g REAL");
+  addCol("ALTER TABLE recipe ADD COLUMN salt_g REAL");
+  addCol("ALTER TABLE profile ADD COLUMN sugar_target REAL NOT NULL DEFAULT 0");
+  addCol("ALTER TABLE profile ADD COLUMN salt_target REAL NOT NULL DEFAULT 0");
+  addCol("ALTER TABLE plan_meal ADD COLUMN sugar REAL DEFAULT 0");
+  addCol("ALTER TABLE plan_meal ADD COLUMN salt REAL DEFAULT 0");
   ensureSeed(d);
   return d;
 }

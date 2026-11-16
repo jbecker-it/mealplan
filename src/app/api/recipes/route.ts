@@ -58,6 +58,10 @@ export async function POST(req: NextRequest) {
     p?: number;
     c?: number;
     f?: number;
+    sugar?: number;
+    salt?: number;
+    sugar_g?: number;
+    salt_g?: number;
     favorite?: boolean;
     ingredients?: NewIngredient[];
     steps?: string[];
@@ -92,7 +96,7 @@ export async function POST(req: NextRequest) {
     const id = Number(
       db
         .prepare(
-          "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, favorite, slots) VALUES (?,?,?,?,?,?,?,?)"
+          "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, sugar_g, salt_g, favorite, slots) VALUES (?,?,?,?,?,?,?,?,?,?)"
         )
         .run(
           body.title.trim(),
@@ -101,6 +105,8 @@ export async function POST(req: NextRequest) {
           body.p ?? null,
           body.c ?? null,
           body.f ?? null,
+          body.sugar_g ?? body.sugar ?? null,
+          body.salt_g ?? body.salt ?? null,
           body.favorite ? 1 : 0,
           (body.slots?.length ? body.slots : ["B", "M", "A", "S"]).join(",")
         )

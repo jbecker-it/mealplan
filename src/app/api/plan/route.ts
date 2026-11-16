@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const rows = db
     .prepare(
       `SELECT pm.profile_id, p.name AS profile_name, pm.slot, pm.recipe_id, rm.title,
-              pm.servings, pm.kcal, pm.p, pm.c, pm.f
+              pm.servings, pm.kcal, pm.p, pm.c, pm.f, pm.sugar, pm.salt
        FROM plan_meal pm
        JOIN profile p ON p.id = pm.profile_id
        JOIN recipe rm ON rm.id = pm.recipe_id
@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
 
   const totals = db
     .prepare(
-      `SELECT profile_id, ROUND(SUM(kcal),0) kcal, ROUND(SUM(p),0) p, ROUND(SUM(c),0) c, ROUND(SUM(f),0) f, COUNT(*) meals
+      `SELECT profile_id, ROUND(SUM(kcal),0) kcal, ROUND(SUM(p),0) p, ROUND(SUM(c),0) c, ROUND(SUM(f),0) f,
+              ROUND(SUM(sugar),1) sugar, ROUND(SUM(salt),2) salt, COUNT(*) meals
        FROM plan_meal WHERE week_key = ? AND day = ? GROUP BY profile_id`
     )
     .all(week, day) as Array<Record<string, unknown>>;

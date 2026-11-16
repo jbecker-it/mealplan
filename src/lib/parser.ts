@@ -16,7 +16,14 @@ export interface ParsedIngredient {
 
 export interface ParsedRecipe {
   title: string;
-  macros?: { kcal?: number; p?: number; c?: number; f?: number };
+  macros?: {
+    kcal?: number;
+    p?: number;
+    c?: number;
+    f?: number;
+    sugar?: number;
+    salt?: number;
+  };
   ingredients: ParsedIngredient[];
   steps: string[];
   tags: string[];
@@ -124,8 +131,8 @@ function parseIngLine(line: string): ParsedIngredient {
 
 function macroVal(line: string, words: string[]): number | undefined {
   const W = words.map((w) => `\\b${w}\\b`).join("|");
-  const numFirst = new RegExp(`(\\d{2,5}[.,]?\\d*)\\s*(?:g\\s*)?(?:${W})`, "i");
-  const wordFirst = new RegExp(`(?:${W})\\s*[:=]?\\s*(\\d{2,5}[.,]?\\d*)`, "i");
+  const numFirst = new RegExp(`(\\d{1,5}[.,]?\\d*)\\s*(?:g\\s*)?(?:${W})`, "i");
+  const wordFirst = new RegExp(`(?:${W})\\s*[:=]?\\s*(\\d{1,5}[.,]?\\d*)`, "i");
   const m = numFirst.exec(line) || wordFirst.exec(line);
   return m ? parseFloat(m[1].replace(",", ".")) : undefined;
 }
@@ -226,6 +233,8 @@ export function parseImport(text: string): ParsedRecipe[] {
         p: macroVal(macroLine, ["protein", "p"]),
         c: macroVal(macroLine, ["kh", "kohlenhydrate", "carbs", "c"]),
         f: macroVal(macroLine, ["fett", "fat", "f"]),
+        sugar: macroVal(macroLine, ["zucker", "sugar"]),
+        salt: macroVal(macroLine, ["salz", "salt"]),
       };
     }
 

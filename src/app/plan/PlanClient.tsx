@@ -26,13 +26,15 @@ interface Profile {
   p_target: number;
   c_target: number;
   f_target: number;
+  sugar_target: number;
+  salt_target: number;
 }
 interface PlanData {
   week: string;
   template: "A" | "B";
   day: number;
   rows: Row[];
-  totals: Record<string, { kcal: number; p: number; c: number; f: number; meals: number }>;
+  totals: Record<string, { kcal: number; p: number; c: number; f: number; sugar: number; salt: number; meals: number }>;
   profiles: Profile[];
   hasPlan: boolean;
 }
@@ -174,18 +176,21 @@ export default function PlanClient() {
                   </div>
                 </div>
               </div>
-              <div className="grid grid-cols-4 gap-px overflow-hidden rounded-b-2xl bg-line">
-                {(["kcal", "p", "c", "f"] as const).map((m) => {
-                  const target = { kcal: p.kcal_target, p: p.p_target, c: p.c_target, f: p.f_target }[m];
-                  const val = tot ? tot[m] : 0;
+              <div className="grid grid-cols-3 gap-px overflow-hidden rounded-b-2xl bg-line sm:grid-cols-6">
+                {(["kcal", "p", "c", "f", "sugar", "salt"] as const).map((m) => {
+                  const target = { kcal: p.kcal_target, p: p.p_target, c: p.c_target, f: p.f_target, sugar: p.sugar_target, salt: p.salt_target }[m];
+                  const val = tot ? (tot[m] ?? 0) : 0;
                   const pc = pct(val, target);
                   const over = val > target * 1.05;
+                  const shown = val >= 10 ? Math.round(val) : Math.round(val * 10) / 10;
+                  const shownT = target >= 10 ? Math.round(target) : Math.round(target * 10) / 10;
+                  const label = { kcal: "kcal", p: "P", c: "C", f: "F", sugar: "Zucker", salt: "Salz" }[m];
                   return (
                     <div key={m} className="bg-card px-3 py-2.5 text-center">
-                      <div className={`text-xs uppercase ${over ? "text-warn" : "text-muted"}`}>{m}</div>
+                      <div className={`text-xs uppercase ${over ? "text-warn" : "text-muted"}`}>{label}</div>
                       <div className="text-sm font-semibold">
-                        {Math.round(val)}
-                        <span className="text-xs font-normal text-muted">/{target}</span>
+                        {shown}
+                        <span className="text-xs font-normal text-muted">/{shownT}{m === "kcal" ? "" : " g"}</span>
                       </div>
                       <div className="mx-auto mt-1 h-1 w-full rounded bg-background">
                         <div

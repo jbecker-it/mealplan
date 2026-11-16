@@ -9,6 +9,8 @@ interface Rec {
   protein_g: number | null;
   carbs_g: number | null;
   fat_g: number | null;
+  sugar_g: number | null;
+  salt_g: number | null;
   favorite: number;
   tags: string[];
   slots: string[];
@@ -88,7 +90,7 @@ export default function RecipesClient() {
     if (d.id) {
       setShowForm(false);
       setNewTitle("");
-      setSel({ id: d.id, title: newTitle, kcal: null, protein_g: null, carbs_g: null, fat_g: null, favorite: 0, tags: [], slots: ["B", "M", "A", "S"] });
+      setSel({ id: d.id, title: newTitle, kcal: null, protein_g: null, carbs_g: null, fat_g: null, sugar_g: null, salt_g: null, favorite: 0, tags: [], slots: ["B", "M", "A", "S"] });
       load();
     }
   }
@@ -154,6 +156,8 @@ export default function RecipesClient() {
             {r.kcal != null ? (
               <div className="text-xs text-muted">
                 {r.kcal} kcal · P {r.protein_g} · C {r.carbs_g} · F {r.fat_g}
+                {r.sugar_g != null && <> · Zucker {r.sugar_g} g</>}
+                {r.salt_g != null && <> · Salz {r.salt_g} g</>}
               </div>
             ) : (
               <div className="text-xs text-warn">Makros fehlen</div>
@@ -203,7 +207,7 @@ function Detail({
   const [d, setD] = useState<RecDetail | null>(null);
   const [edit, setEdit] = useState(false);
   const [title, setTitle] = useState(rec.title);
-  const [macros, setMacros] = useState({ kcal: "", p: "", c: "", f: "" });
+  const [macros, setMacros] = useState({ kcal: "", p: "", c: "", f: "", su: "", sa: "" });
   const [ings, setIngs] = useState<Array<{ name: string; amount: string; unit: string }>>([]);
   const [steps, setSteps] = useState("");
   const [tagSel, setTagSel] = useState<number[]>([]);
@@ -217,7 +221,7 @@ function Detail({
       .then((x: RecDetail) => {
         setD(x);
         setTitle(x.title);
-        setMacros({ kcal: x.kcal != null ? String(x.kcal) : "", p: x.protein_g != null ? String(x.protein_g) : "", c: x.carbs_g != null ? String(x.carbs_g) : "", f: x.fat_g != null ? String(x.fat_g) : "" });
+        setMacros({ kcal: x.kcal != null ? String(x.kcal) : "", p: x.protein_g != null ? String(x.protein_g) : "", c: x.carbs_g != null ? String(x.carbs_g) : "", f: x.fat_g != null ? String(x.fat_g) : "", su: x.sugar_g != null ? String(x.sugar_g) : "", sa: x.salt_g != null ? String(x.salt_g) : "" });
         setIngs(x.ingredients.map((i) => ({ name: i.name, amount: i.amount?.toString() ?? "", unit: i.unit || "" })));
         setSteps(x.steps.join("\n"));
         setTagSel(x.tagIds || []);
@@ -245,6 +249,8 @@ function Detail({
         protein_g: macros.p ? Number(macros.p) : null,
         carbs_g: macros.c ? Number(macros.c) : null,
         fat_g: macros.f ? Number(macros.f) : null,
+        sugar_g: macros.su ? Number(macros.su) : null,
+        salt_g: macros.sa ? Number(macros.sa) : null,
         ingredients: ings.filter((i) => i.name.trim()).map((i) => ({
           name: i.name, amount: i.amount ? Number(i.amount) : null, unit: i.unit || undefined,
         })),
@@ -283,8 +289,8 @@ function Detail({
 
         {!edit ? (
           <div className="space-y-4">
-            <div className="grid grid-cols-4 gap-2 text-center">
-              {([["kcal", d.kcal], ["Protein", d.protein_g], ["KH", d.carbs_g], ["Fett", d.fat_g]] as const).map(([l, v]) => (
+            <div className="grid grid-cols-3 gap-2 text-center sm:grid-cols-6">
+              {([["kcal", d.kcal], ["Protein", d.protein_g], ["KH", d.carbs_g], ["Fett", d.fat_g], ["Zucker", d.sugar_g], ["Salz", d.salt_g]] as const).map(([l, v]) => (
                 <div key={l} className="rounded-xl bg-card2 px-2 py-2">
                   <div className="text-xs text-muted">{l}</div>
                   <div className="font-semibold">{v ?? "–"}</div>
@@ -329,8 +335,8 @@ function Detail({
         ) : (
           <div className="space-y-4">
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titel" className="w-full rounded-lg border border-line bg-background px-3 py-2 outline-none focus:border-accent" />
-            <div className="grid grid-cols-4 gap-2">
-              {([["kcal", "kcal"], ["p", "Protein g"], ["c", "KH g"], ["f", "Fett g"]] as const).map(([k, l]) => (
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {([["kcal", "kcal"], ["p", "Protein g"], ["c", "KH g"], ["f", "Fett g"], ["su", "Zucker g"], ["sa", "Salz g"]] as const).map(([k, l]) => (
                 <label key={k} className="text-xs text-muted">
                   {l}
                   <input value={(macros as Record<string, string>)[k]} onChange={(e) => setMacros((m) => ({ ...m, [k]: e.target.value }))} className="mt-1 w-full rounded-lg border border-line bg-background px-2 py-1.5 text-sm outline-none focus:border-accent" />

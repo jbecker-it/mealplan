@@ -46,6 +46,8 @@ interface RecDef {
   P: number;
   C: number;
   F: number;
+  Su?: number; // Zucker (g)
+  Sa?: number; // Salz (g)
   tags: string[];
   ings: RecIng[];
   steps: string[];
@@ -55,7 +57,7 @@ interface RecDef {
 const RECIPES: RecDef[] = [
   {
     title: "Asia Nudeln mit Tempeh",
-    K: 620, P: 54, C: 49, F: 19,
+    K: 620, P: 54, C: 49, F: 19, Su: 8, Sa: 2.5,
     tags: ["high-protein", "schnell"],
     ings: [
       ["Nudeln", 200, "g"],
@@ -72,7 +74,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Fusilli al Forno",
-    K: 820, P: 65, C: 80, F: 32,
+    K: 820, P: 65, C: 80, F: 32, Su: 12, Sa: 1.6,
     tags: ["high-protein", "backofen"],
     ings: [
       ["Fusilli", 250, "g"],
@@ -90,7 +92,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Hafer-Proteinshake",
-    K: 160, P: 25, C: 15, F: 3,
+    K: 160, P: 25, C: 15, F: 3, Su: 4, Sa: 0.1,
     tags: ["schnell", "high-protein"],
     ings: [
       ["Haferdrink", 250, "ml"],
@@ -101,7 +103,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Tofu-Spieße mit Reis",
-    K: 350, P: 28, C: 18, F: 19,
+    K: 350, P: 28, C: 18, F: 19, Su: 1.5, Sa: 1.8,
     tags: ["schnell", "high-protein"],
     ings: [
       ["Tofu", 150, "g"],
@@ -118,7 +120,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Vegane Kartoffelsuppe",
-    K: 420, P: 18, C: 55, F: 15,
+    K: 420, P: 18, C: 55, F: 15, Su: 4, Sa: 1.2,
     tags: ["comfort"],
     ings: [
       ["Kartoffeln", 400, "g"],
@@ -135,7 +137,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Tempeh-Bowl mit Edamame",
-    K: 640, P: 38, C: 62, F: 24,
+    K: 640, P: 38, C: 62, F: 24, Su: 3, Sa: 1.6,
     tags: ["high-protein"],
     ings: [
       ["Reis", 150, "g"],
@@ -152,7 +154,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Falafel-Salat",
-    K: 380, P: 16, C: 30, F: 22,
+    K: 380, P: 16, C: 30, F: 22, Su: 5, Sa: 1.8,
     tags: ["schnell"],
     ings: [
       ["Tomaten", 150, "g"],
@@ -167,7 +169,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Hefeflocken-Porridge",
-    K: 400, P: 22, C: 52, F: 12,
+    K: 400, P: 22, C: 52, F: 12, Su: 12, Sa: 0.3,
     tags: ["schnell"],
     ings: [
       ["Haferflocken", 80, "g"],
@@ -182,7 +184,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Protein-Pancakes",
-    K: 450, P: 35, C: 50, F: 12,
+    K: 450, P: 35, C: 50, F: 12, Su: 15, Sa: 0.4,
     tags: ["high-protein"],
     ings: [
       ["Haferflocken", 70, "g"],
@@ -198,7 +200,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Crunchy Tofu",
-    K: 300, P: 18, C: 12, F: 21,
+    K: 300, P: 18, C: 12, F: 21, Su: 2, Sa: 1.5,
     tags: ["schnell", "high-protein"],
     ings: [
       ["Tofu", 150, "g"],
@@ -214,7 +216,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Tofu-Curry mit Reis",
-    K: 680, P: 42, C: 60, F: 28,
+    K: 680, P: 42, C: 60, F: 28, Su: 6, Sa: 2.2,
     tags: ["high-protein", "comfort"],
     ings: [
       ["Tofu", 150, "g"],
@@ -230,7 +232,7 @@ const RECIPES: RecDef[] = [
   },
   {
     title: "Overnight Oats",
-    K: 620, P: 38, C: 55, F: 28,
+    K: 620, P: 38, C: 55, F: 28, Su: 18, Sa: 0.4,
     tags: ["overnight"],
     ings: [
       ["Haferflocken", 60, "g"],
@@ -264,7 +266,7 @@ export function ensureSeed(d: Database.Database): void {
     for (const t of TAGS) insTag.run(t);
 
     const insRec = d.prepare(
-      "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, favorite) VALUES (?,?,?,?,?,?,0)"
+      "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, sugar_g, salt_g, favorite) VALUES (?,?,?,?,?,?,?,? ,0)"
     );
     const insRI = d.prepare(
       "INSERT INTO recipe_ingredient(recipe_id, ingredient_id, amount, unit, sort) VALUES (?,?,?,?,?)"
@@ -283,7 +285,7 @@ export function ensureSeed(d: Database.Database): void {
     const insRT = d.prepare("INSERT OR IGNORE INTO recipe_tag(recipe_id, tag_id) VALUES (?,?)");
 
     for (const r of RECIPES) {
-      const id = insRec.run(r.title, r.desc ?? null, r.K, r.P, r.C, r.F).lastInsertRowid;
+      const id = insRec.run(r.title, r.desc ?? null, r.K, r.P, r.C, r.F, r.Su ?? null, r.Sa ?? null).lastInsertRowid;
       r.ings.forEach(([iname, amount, unit], i) =>
         insRI.run(id, ingId(iname), amount, unit, i)
       );
@@ -292,10 +294,10 @@ export function ensureSeed(d: Database.Database): void {
     }
 
     const insProf = d.prepare(
-      "INSERT INTO profile(name, kcal_target, p_target, c_target, f_target, slot_split) VALUES (?,?,?,?,?,?)"
+      "INSERT INTO profile(name, kcal_target, p_target, c_target, f_target, sugar_target, salt_target, slot_split) VALUES (?,?,?,?,?,?,?,?)"
     );
-    insProf.run("Johannes", 2660, 180, 326, 71, JSON.stringify({ B: 670, M: 930, A: 800, S: 270 }));
-    insProf.run("Partnerin", 2000, 120, 260, 65, JSON.stringify({ B: 500, M: 700, A: 600, S: 200 }));
+    insProf.run("Johannes", 2660, 180, 326, 71, 40, 5, JSON.stringify({ B: 670, M: 930, A: 800, S: 270 }));
+    insProf.run("Partnerin", 2000, 120, 260, 65, 35, 4.5, JSON.stringify({ B: 500, M: 700, A: 600, S: 200 }));
 
     // Aliase: bekannte Namensvarianten → kanonische Entität
     const insAlias = d.prepare(

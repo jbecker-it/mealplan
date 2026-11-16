@@ -15,7 +15,7 @@ interface Ing {
 }
 interface PreviewRec {
   title: string;
-  macros?: { kcal?: number; p?: number; c?: number; f?: number };
+  macros?: { kcal?: number; p?: number; c?: number; f?: number; sugar?: number; salt?: number };
   ingredients: Ing[];
   steps: string[];
   tags: string[];
@@ -184,6 +184,8 @@ export default function ImportClient() {
                   {rec.macros?.kcal != null ? (
                     <span className="text-sm text-muted">
                       {rec.macros.kcal} kcal · P {rec.macros.p} · C {rec.macros.c} · F {rec.macros.f}
+                      {rec.macros.sugar != null && <> · Zucker {rec.macros.sugar} g</>}
+                      {rec.macros.salt != null && <> · Salz {rec.macros.salt} g</>}
                     </span>
                   ) : (
                     <span className="rounded bg-danger/20 px-2 py-0.5 text-xs text-danger">Makros fehlen — wird übersprungen</span>

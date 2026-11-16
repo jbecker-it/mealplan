@@ -19,6 +19,8 @@ function loadPersons() {
       P: Number(p.p_target ?? 150),
       C: Number(p.c_target ?? 300),
       F: Number(p.f_target ?? 70),
+      SuT: Number(p.sugar_target ?? 0),
+      SaT: Number(p.salt_target ?? 0),
       split,
       tag_include: p.tag_include ? (JSON.parse(String(p.tag_include)) as number[]) : [],
       tag_exclude: p.tag_exclude ? (JSON.parse(String(p.tag_exclude)) as number[]) : [],
@@ -41,6 +43,7 @@ export async function POST(req: NextRequest) {
   const all = db
     .prepare(
       `SELECT r.id, r.title AS name, r.kcal AS K, r.protein_g AS P, r.carbs_g AS C, r.fat_g AS F,
+              r.sugar_g AS Su, r.salt_g AS Sa,
               r.slots AS slot_list,
               GROUP_CONCAT(rt.tag_id, '|') AS tag_ids
        FROM recipe r
@@ -89,11 +92,13 @@ export async function POST(req: NextRequest) {
     P: Number(r.P ?? 0),
     C: Number(r.C ?? 0),
     F: Number(r.F ?? 0),
+    Su: Number(r.Su ?? 0),
+    Sa: Number(r.Sa ?? 0),
     slots: String(r.slot_list ?? "B,M,A,S").split(",").map((s) => s.trim()).filter(Boolean) as EngRecipe["slots"],
   }));
 
-  const engPersons: EngPerson[] = persons2.map(({ name, K, P, C, F, split }) => ({
-    name, K, P, C, F, split,
+  const engPersons: EngPerson[] = persons2.map(({ name, K, P, C, F, SuT, SaT, split }) => ({
+    name, K, P, C, F, SuT, SaT, split,
   }));
 
   const t0 = Date.now();
@@ -105,8 +110,8 @@ export async function POST(req: NextRequest) {
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM plan_meal WHERE week_key = ?").run(week);
     const ins = db.prepare(
-      `INSERT INTO plan_meal(week_key, template_id, day, profile_id, slot, recipe_id, servings, kcal, p, c, f)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO plan_meal(week_key, template_id, day, profile_id, slot, recipe_id, servings, kcal, p, c, f, sugar, salt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
     );
     for (let d = 0; d < 7; d++) {
       persons2.forEach((p, pi) => {
@@ -117,7 +122,8 @@ export async function POST(req: NextRequest) {
           const s = cell.servings;
           ins.run(
             week, template, d, p.id, SLOT_KEYS[si], r.id, s,
-            r.K * s, r.P * s, r.C * s, r.F * s
+            r.K * s, r.P * s, r.C * s, r.F * s,
+            (r.Su ?? 0) * s, (r.Sa ?? 0) * s
           );
         });
       });

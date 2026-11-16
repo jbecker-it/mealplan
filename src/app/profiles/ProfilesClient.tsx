@@ -9,6 +9,8 @@ interface Profile {
   p_target: number;
   c_target: number;
   f_target: number;
+  sugar_target: number;
+  salt_target: number;
   slot_split: Record<string, number> | null;
   tag_include: number[];
   tag_exclude: number[];
@@ -54,6 +56,8 @@ export default function ProfilesClient() {
         p_target: Number(p.p_target),
         c_target: Number(p.c_target),
         f_target: Number(p.f_target),
+        sugar_target: Number(p.sugar_target ?? 0),
+        salt_target: Number(p.salt_target ?? 0),
         split: p.slot_split,
         tag_include: p.tag_include,
         tag_exclude: p.tag_exclude,
@@ -121,8 +125,8 @@ export default function ProfilesClient() {
                 {savedId === p.id && <span className="text-sm text-accent">✓ Gespeichert</span>}
               </div>
 
-              <div className="mb-3 grid grid-cols-4 gap-2">
-                {([["kcal_target", "kcal"], ["p_target", "Protein g"], ["c_target", "KH g"], ["f_target", "Fett g"]] as const).map(([k, l]) => (
+              <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                {([["kcal_target", "kcal"], ["p_target", "Protein g"], ["c_target", "KH g"], ["f_target", "Fett g"], ["sugar_target", "Zucker g"], ["salt_target", "Salz g"]] as const).map(([k, l]) => (
                   <label key={k} className="text-xs text-muted">
                     {l}
                     <input

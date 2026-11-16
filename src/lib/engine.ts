@@ -8,7 +8,9 @@ export interface Recipe {
   P: number;
   C: number;
   F: number;
-  slots?: SlotKey[]; // erlaubte Slots; leer/undefined = überall
+  Su?: number; // Zucker pro Portion (g)
+  Sa?: number; // Salz pro Portion (g)
+  slots: SlotKey[];
 }
 
 export interface Person {
@@ -17,7 +19,9 @@ export interface Person {
   P: number;
   C: number;
   F: number;
-  split: { B: number; M: number; A: number; S: number };
+  SuT?: number; // Tages-Ziel Zucker (g), 0 = unbeachtlich
+  SaT?: number; // Tages-Ziel Salz (g), 0 = unbeachtlich
+  split: Record<SlotKey, number>;
 }
 
 export const SLOT_KEYS = ["B", "M", "A", "S"] as const;
@@ -47,9 +51,9 @@ export interface TemplateResult {
   B: DayPlan[];
 }
 
-function totals(sel: Sel | null | undefined): [number, number, number, number] {
-  if (!sel) return [0, 0, 0, 0];
-  let K = 0, P = 0, C = 0, F = 0;
+function totals(sel: Sel | null | undefined): [number, number, number, number, number, number] {
+  if (!sel) return [0, 0, 0, 0, 0, 0];
+  let K = 0, P = 0, C = 0, F = 0, Su = 0, Sa = 0;
   for (const cell of sel) {
     if (!cell) continue;
     const [r, s] = cell;
@@ -57,17 +61,24 @@ function totals(sel: Sel | null | undefined): [number, number, number, number] {
     P += r.P * s;
     C += r.C * s;
     F += r.F * s;
+    Su += (r.Su ?? 0) * s;
+    Sa += (r.Sa ?? 0) * s;
   }
-  return [K, P, C, F];
+  return [K, P, C, F, Su, Sa];
 }
 
 export function personObj(sel: Sel | null | undefined, p: Person, pen: Map<string, number>): number {
-  const [K, P, C, F] = totals(sel);
+  const [K, P, C, F, Su, Sa] = totals(sel);
   if (K === 0) return 1e9; // noch nicht vollständig gefüllt
   const obj =
     1.0 * (Math.abs(P - p.P) / p.P) +
     0.8 * (Math.abs(K - p.K) / p.K) +
     0.3 * Math.abs(C / (C + F) - p.C / (p.C + p.F));
+  // Zucker/Salz: nur ÜBERSCHUSS über das Tagesziel bestrafen
+  // (weniger Zucker/Salz ist gut; Ziel 0 = unbeachtlich)
+  let suPen = 0;
+  if (p.SuT && p.SuT > 0) suPen += 0.4 * Math.max(0, Su - p.SuT) / p.SuT;
+  if (p.SaT && p.SaT > 0) suPen += 0.4 * Math.max(0, Sa - p.SaT) / p.SaT;
   let slotPen = 0;
   for (let i = 0; i < 4; i++) {
     const cell = sel?.[i];
@@ -84,7 +95,7 @@ export function personObj(sel: Sel | null | undefined, p: Person, pen: Map<strin
   const dup = uniq < names.length ? 0.4 * (names.length - uniq) : 0;
   let rep = 0;
   for (const cell of sel ?? []) if (cell) rep += 0.5 * (pen.get(cell[0].name) ?? 0);
-  return obj + slotPen + dup + rep;
+  return obj + slotPen + dup + rep + suPen;
 }
 
 function dayObj(day: Sel[], persons: Person[], pens: Map<string, number>[]): number {
