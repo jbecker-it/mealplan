@@ -79,11 +79,11 @@ export default function SettingsClient() {
       return;
     }
     const ok = window.confirm(
-      "ZURÜCKSETZEN AUF AUSLIEFERUNGSZUSTAND?\n\n" +
-        "Alle Rezepte, Zutaten, Pläne und Listen werden gelöscht und die " +
-        "Auslieferungszustand-Daten (Demo-Rezepte + 2 Profile) neu angelegt. " +
-        "Dein Passwort bleibt erhalten. Der vorherige Stand wird automatisch " +
-        "in data/backups/ gesichert."
+      "SOLL WIRKLICH ALLES GELÖSCHT WERDEN?\n\n" +
+        "Alle Rezepte, Zutaten, Aliase, Tags, Pläne und Einkaufslisten " +
+        "werden endgültig entfernt — danach ist die Umgebung komplett blank. " +
+        "Deine Profile (mit Makro-Zielen) und dein Passwort bleiben erhalten. " +
+        "Der vorherige Stand wird automatisch in data/backups/ gesichert."
     );
     if (!ok) return;
     setBusy("reset");
@@ -213,9 +213,10 @@ export default function SettingsClient() {
           Zurücksetzen (Gefahrenzone)
         </p>
         <p className="mb-3 text-sm text-muted">
-          Löscht alle Rezepte, Zutaten, Aliase, Pläne und Listen und legt den
-          Auslieferungszustand an (Demo-Rezepte + 2 Profile). Dein Passwort
-          bleibt erhalten. Vorheriges Backup empfohlen.
+          Löscht alle Rezepte, Zutaten, Aliase, Tags, Pläne und
+          Einkaufslisten — danach ist alles blank. Deine Profile (mit
+          Makro-Zielen) und dein Passwort bleiben erhalten. Vorher wird
+          automatisch ein Backup angelegt.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <input
