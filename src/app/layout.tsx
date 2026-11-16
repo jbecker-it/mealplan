@@ -18,6 +18,7 @@ const LINKS = [
   ["/plan", "Plan"],
   ["/list", "Einkaufsliste"],
   ["/recipes", "Rezepte"],
+  ["/ingredients", "Zutaten"],
   ["/import", "Import"],
   ["/profiles", "Profile"],
 ] as const;
