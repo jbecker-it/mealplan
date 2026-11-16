@@ -40,9 +40,9 @@ export function deleteSession(token: string | null | undefined): void {
 
 export function isSetup(): boolean {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'auth'").get() as
-    | { value: string }
+    | { value: string | null }
     | undefined;
-  return !!row;
+  return !!row && typeof row.value === "string" && row.value.length > 0;
 }
 
 function scrypt(password: string, salt: string): string {
@@ -60,10 +60,17 @@ export function setupPassword(password: string): void {
 
 export function checkPassword(password: string): boolean {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'auth'").get() as
-    | { value: string }
+    | { value: string | null }
     | undefined;
-  if (!row) return false;
-  const { salt, hash } = JSON.parse(row.value) as { salt: string; hash: string };
+  if (!row || !row.value) return false;
+  let data: { salt?: string; hash?: string };
+  try {
+    data = JSON.parse(row.value);
+  } catch {
+    return false;
+  }
+  if (!data.salt || !data.hash) return false;
+  const { salt, hash } = data;
   const got = scrypt(password, salt);
   return got.length === hash.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(hash));
 }
