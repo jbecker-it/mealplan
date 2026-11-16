@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureSeed } from "./seed";
+import { shiftWeek, weekNum } from "./week";
 
 export const DB_PATH =
   process.env.MEALPLAN_DB ||
@@ -165,6 +166,34 @@ function createDb(): DbInstance {
     );
   } catch {
     // Index konnte nicht angelegt werden — Upserts fallen auf Delete-then-Insert zurück
+  }
+  // Migration: EINE Woche = EINES Template (ungerade Woche = A, gerade = B).
+  // Altes Modell: A und B in derselben Woche. B-Zeilen wandern in die
+  // Folgewoche, A-Zeilen (in geraden Wochen) in die Vorwoche — aber nur,
+  // wenn dort noch kein Plan liegt (idempotent, keine Datenverluste).
+  try {
+    const rows = d
+      .prepare("SELECT DISTINCT week_key, template_id FROM plan_meal")
+      .all() as Array<{ week_key: string; template_id: string }>;
+    const done = new Set<string>();
+    for (const { week_key, template_id } of rows) {
+      const expected = weekNum(week_key) % 2 === 1 ? "A" : "B";
+      if (template_id === expected) continue;
+      const target =
+        template_id === "B" ? shiftWeek(week_key, 1) : shiftWeek(week_key, -1);
+      if (done.has(target + template_id)) continue;
+      done.add(target + template_id);
+      const existing = d
+        .prepare(
+          "SELECT COUNT(*) AS n FROM plan_meal WHERE week_key = ? AND template_id = ?"
+        )
+        .get(target, template_id) as { n: number };
+      if (existing.n > 0) continue;
+      d.prepare("UPDATE plan_meal SET week_key = ? WHERE week_key = ? AND template_id = ?")
+        .run(target, week_key, template_id);
+    }
+  } catch {
+    // Migration überspringbar — neue Daten werden korrekt geschrieben
   }
   ensureSeed(d);
   return d;

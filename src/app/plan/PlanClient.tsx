@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { shiftWeek, weekTemplate } from "@/lib/week";
 
 const SLOT_NAMES: Record<string, string> = {
   B: "Frühstück",
@@ -7,7 +8,8 @@ const SLOT_NAMES: Record<string, string> = {
   A: "Abend",
   S: "Snack",
 };
-const SLOT_ORDER = ["B", "M", "A", "S"];
+const SLOT_ORDER = ["B", "M", "A", "S"] as const;
+const SIZES = [0.5, 1, 1.5];
 
 interface Profile {
   id: number;
@@ -44,7 +46,7 @@ interface Totals {
 }
 interface PlanData {
   week: string;
-  template: string;
+  template: "A" | "B";
   day: number;
   rows: Row[];
   totals: Record<string, Totals>;
@@ -71,73 +73,134 @@ function fmt(n: number, d = 0) {
   return n.toLocaleString("de-DE", { maximumFractionDigits: d });
 }
 
-function Cell({ v, t }: { v: number; t: number }) {
-  if (!t) return <span className="px-2 py-1 text-slate-500">—</span>;
-  const over = v > t * 1.05;
-  const under = v < t * 0.7;
+// Fortschrittsbalken: Balken = Verbrauch, weiße Markierung = Tagesziel,
+// roter Anteil = Überzieher. Rechts: Wert/Ziel + wie viel frei oder über.
+function MacroBar({
+  label,
+  val,
+  target,
+  unit,
+}: {
+  label: string;
+  val: number;
+  target: number;
+  unit: string;
+}) {
+  if (!target) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-[11px] uppercase tracking-wide text-slate-500">
+          {label}
+        </span>
+        <div className="h-2.5 flex-1 rounded bg-slate-800/60" />
+        <span className="w-24 shrink-0 text-right text-xs tabular-nums text-slate-400">
+          {fmt(val, 1)} {unit} · kein Ziel
+        </span>
+      </div>
+    );
+  }
+  const scale = Math.max(target, val);
+  const okPct = (Math.min(val, target) / scale) * 100;
+  const overPct = (Math.max(0, val - target) / scale) * 100;
+  const targetPct = (target / scale) * 100;
+  const over = val > target + 0.001;
+  const delta = Math.abs(val - target);
   return (
-    <span
-      className={`px-2 py-1 tabular-nums ${
-        over ? "bg-rose-500/10 text-rose-400 font-semibold" : under ? "text-amber-300/80" : "text-emerald-300"
-      }`}
-    >
-      {fmt(v, 1)}
-    </span>
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-[11px] uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <div className="relative h-2.5 flex-1 overflow-hidden rounded bg-slate-800">
+        <div className="h-full bg-emerald-500/90" style={{ width: `${okPct}%` }} />
+        {overPct > 0 && (
+          <div className="h-full bg-rose-500" style={{ width: `${overPct}%` }} />
+        )}
+        <div
+          className="absolute top-0 h-full w-0.5 bg-white/80"
+          style={{ left: `calc(${targetPct}% - 1px)` }}
+          title={`Ziel: ${fmt(target, 1)} ${unit}`}
+        />
+      </div>
+      <span
+        className={`w-32 shrink-0 text-right text-xs tabular-nums ${
+          over ? "font-semibold text-rose-400" : "text-slate-300"
+        }`}
+      >
+        {fmt(val, 1)} / {fmt(target, 1)} {unit}{" "}
+        <span className={over ? "text-rose-400" : "text-slate-500"}>
+          {over ? `(+${fmt(delta, 1)})` : `(${fmt(delta, 1)} frei)`}
+        </span>
+      </span>
+    </div>
   );
 }
 
 export default function PlanClient() {
   const [week, setWeek] = useState("");
-  const [template, setTemplate] = useState<"A" | "B">("A");
   const [data, setData] = useState<PlanData | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   // Swap-Dialog
-  const [swapSlot, setSwapSlot] = useState<{ slot: string; profileId: number; profileName: string } | null>(null);
+  const [swapSlot, setSwapSlot] = useState<{
+    slot: string;
+    profileId: number;
+    profileName: string;
+  } | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
   // Vorlage speichern
   const [tplName, setTplName] = useState("");
   const [savingTpl, setSavingTpl] = useState(false);
 
-  const load = useCallback(async (tpl?: "A" | "B") => {
+  const load = useCallback(async (w?: string) => {
     setLoading(true);
-    const r = await fetch(
-      `/api/plan?template=${tpl ?? template}&day=0`,
-      { cache: "no-store" }
-    );
+    const url = w ? `/api/plan?week=${encodeURIComponent(w)}&day=0` : "/api/plan?day=0";
+    const r = await fetch(url, { cache: "no-store" });
     if (r.ok) {
       const j: PlanData = await r.json();
       setData(j);
-      if (j.week) setWeek(j.week);
-    } else setMsg({ text: "Fehler beim Laden des Plans", kind: "err" });
+      setWeek(j.week);
+    } else {
+      setMsg({ text: "Fehler beim Laden des Plans", kind: "err" });
+    }
     setLoading(false);
-  }, [template]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  const goto = (delta: number) => {
+    if (!week) return;
+    void load(shiftWeek(week, delta));
+  };
+
   const generate = async () => {
     setBusy("generate");
-    const r = await fetch("/api/plan/generate", { method: "POST" });
+    setMsg(null);
+    const r = await fetch("/api/plan/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(week ? { week } : {}),
+    });
     const j = await r.json();
     setMsg(
       r.ok
-        ? { text: j.note || `Wochenplan generiert (${j.ms} ms) — Templates A und B`, kind: "ok" }
+        ? { text: j.note || "Plan generiert — Template A und B", kind: "ok" }
         : { text: j.error || "Generierung fehlgeschlagen", kind: "err" }
     );
     setBusy(null);
-    void load();
+    void load(week || undefined);
   };
 
   const openSwap = async (slot: string, profileId: number, profileName: string) => {
+    if (!data) return;
     setSwapSlot({ slot, profileId, profileName });
     setSuggestions(null);
     setSuggestLoading(true);
     const r = await fetch(
-      `/api/plan/suggest?week=${encodeURIComponent(week)}&template=${template}&slot=${slot}&profileId=${profileId}`,
+      `/api/plan/suggest?week=${encodeURIComponent(week)}&template=${data.template}&slot=${slot}&profileId=${profileId}`,
       { cache: "no-store" }
     );
     if (r.ok) setSuggestions((await r.json()).suggestions as Suggestion[]);
@@ -146,14 +209,14 @@ export default function PlanClient() {
   };
 
   const doSwap = async (s: Suggestion) => {
-    if (!swapSlot) return;
+    if (!swapSlot || !data) return;
     setBusy(`swap-${s.id}`);
     const r = await fetch("/api/plan/swap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         week,
-        template,
+        template: data.template,
         profileId: swapSlot.profileId,
         slot: swapSlot.slot,
         recipeId: s.id,
@@ -164,7 +227,9 @@ export default function PlanClient() {
     setMsg(
       r.ok
         ? {
-            text: r.status === 200 && j.note ? j.note : `${swapSlot.profileName} · ${SLOT_NAMES[swapSlot.slot]}: → „${s.title}“ (${s.servings}×) · 7 Tage + Einkaufsliste aktualisiert`,
+            text:
+              j.note ||
+              `${swapSlot.profileName} · ${SLOT_NAMES[swapSlot.slot]}: → „${s.title}“ (${s.servings}×) · alle 7 Tage + Einkaufsliste aktualisiert`,
             kind: "ok",
           }
         : { text: j.error || "Austausch fehlgeschlagen", kind: "err" }
@@ -172,7 +237,26 @@ export default function PlanClient() {
     setBusy(null);
     setSwapSlot(null);
     setSuggestions(null);
-    void load();
+    void load(week || undefined);
+  };
+
+  const changeServings = async (profileId: number, slot: string, servings: number) => {
+    if (!data) return;
+    const row = data.rows.find((r) => r.profile_id === profileId && r.slot === slot);
+    if (!row) return;
+    await fetch("/api/plan/swap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        week,
+        template: data.template,
+        profileId,
+        slot,
+        recipeId: row.recipe_id,
+        servings,
+      }),
+    });
+    void load(week || undefined);
   };
 
   const saveTemplate = async () => {
@@ -181,7 +265,7 @@ export default function PlanClient() {
     const r = await fetch("/api/templates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: tplName.trim(), week, template }),
+      body: JSON.stringify({ name: tplName.trim(), week }),
     });
     const j = await r.json();
     setMsg(
@@ -193,41 +277,62 @@ export default function PlanClient() {
     if (r.ok) setTplName("");
   };
 
-  const rowsBySlot = (slot: string) =>
-    (data?.rows || []).filter((r) => r.slot === slot);
+  if (!data)
+    return (
+      <div className="flex flex-col items-center gap-2 py-16">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+        <div className="text-sm text-slate-500">Lade Wochenplan…</div>
+      </div>
+    );
+
+  const isOdd = weekTemplate(data.week) === "A";
+  const cell = (pi: number, slot: string) =>
+    data.rows.find((r) => r.profile_id === pi && r.slot === slot);
 
   return (
     <div className="space-y-4">
+      {/* Kopf: Titel + Wochen-Navigation + Template-Badge */}
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-bold">Wochenplan</h1>
-        <span className="text-sm text-slate-400">
-          {week} · <b>Template {template}</b> · alle 7 Tage identisch
+        <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-900/60 p-1">
+          <button
+            onClick={() => goto(-1)}
+            disabled={!!busy}
+            className="rounded px-2.5 py-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-40"
+            title="Vorwoche"
+          >
+            ‹
+          </button>
+          <span className="min-w-[92px] px-1 text-center text-sm font-medium tabular-nums">
+            {week}
+          </span>
+          <button
+            onClick={() => goto(1)}
+            disabled={!!busy}
+            className="rounded px-2.5 py-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-40"
+            title="Folgewoche"
+          >
+            ›
+          </button>
+        </div>
+        <span className="rounded-lg bg-emerald-900/50 px-3 py-1.5 text-sm text-emerald-300">
+          Template <b>{data.template}</b> · {isOdd ? "ungerade Woche" : "gerade Woche"}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden border border-white/10">
-            {(["A", "B"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTemplate(t)}
-                className={`px-4 py-2 text-sm font-medium ${
-                  template === t
-                    ? "bg-emerald-600 text-white"
-                    : "bg-slate-800/50 text-slate-400 hover:bg-slate-800"
-                }`}
-              >
-                Template {t}
-              </button>
-            ))}
-          </div>
           <button
             onClick={generate}
             disabled={!!busy}
-            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium disabled:opacity-50"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
           >
             {busy === "generate" ? "Optimiere…" : "Neu generieren"}
           </button>
         </div>
       </div>
+
+      <p className="text-xs text-slate-500">
+        Eine Woche hat genau ein Template: ungerade Woche → <b>A</b>, gerade →{" "}
+        <b>B</b>. Innerhalb des Templates ist jeder der 7 Tage identisch.
+      </p>
 
       {msg && (
         <div
@@ -239,167 +344,162 @@ export default function PlanClient() {
         </div>
       )}
 
-      {!data?.hasPlan && (
+      {!data.hasPlan && (
         <div className="rounded-xl border border-dashed border-white/15 p-8 text-center text-slate-400">
-          Noch kein Plan für diese Woche. Oben auf <b>„Neu generieren“</b> tippen —
-          dann entstehen Template A und B (jeweils ein Tag, an allen 7 Tagen identisch).
+          Noch kein Plan für Woche {week} (Template {data.template}).
+          <br />
+          Oben auf <b>„Neu generieren“</b> tippen — dann entstehen Template A und B
+          je eine Woche.
         </div>
       )}
 
-      {data?.hasPlan &&
-        SLOT_ORDER.map((slot) => {
-          const slotRows = rowsBySlot(slot);
-          const shared = slot === "M" || slot === "A";
-          return (
-            <div key={slot} className="rounded-xl border border-white/10 bg-slate-900/50 overflow-hidden">
-              <div className="flex items-center px-4 py-2 bg-slate-800/60">
-                <h3 className="font-semibold text-sm">{SLOT_NAMES[slot]}</h3>
-                {shared && <span className="ml-2 text-[11px] text-slate-500">gemeinsam</span>}
-              </div>
-              {slotRows.length === 0 ? (
-                <div className="p-4 text-sm text-slate-500">— leer —</div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[11px] uppercase tracking-wide text-slate-500 border-b border-white/5">
-                      <th className="px-2 py-1 text-left">Profil</th>
-                      <th className="px-2 py-1 text-left">Mahlzeit</th>
-                      <th className="px-2 py-1 text-left">Portion</th>
-                      <th className="px-2 py-1 text-right">kcal</th>
-                      <th className="px-2 py-1 text-right">P</th>
-                      <th className="px-2 py-1 text-right">C</th>
-                      <th className="px-2 py-1 text-right">F</th>
-                      <th className="px-2 py-1 text-right">Zucker</th>
-                      <th className="px-2 py-1 text-right">Salz</th>
-                      <th className="px-2 py-1" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {slotRows.map((r) => (
-                      <tr key={`${r.profile_id}-${r.slot}`} className="border-b border-white/5 last:border-0">
-                        <td className="px-2 py-1 text-slate-300">{r.profile_name}</td>
-                        <td className="px-2 py-1">{r.title}</td>
-                        <td className="px-2 py-1 text-slate-400">{r.servings}×</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{fmt(r.kcal)}</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{fmt(r.p, 1)}</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{fmt(r.c, 1)}</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{fmt(r.f, 1)}</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{fmt(r.sugar, 1)} g</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{fmt(r.salt, 2)} g</td>
-                        <td className="px-2 py-1 text-right">
-                          <button
-                            onClick={() => openSwap(slot, r.profile_id, r.profile_name)}
-                            className="text-xs text-emerald-400 hover:text-emerald-300"
-                          >
-                            Austauschen
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          );
-        })}
-
-      {data?.hasPlan && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {data.hasPlan && (
+        <div className="grid gap-4 md:grid-cols-2">
           {data.profiles.map((p) => {
-            const t = data.totals[String(p.id)];
+            const tot = data.totals[String(p.id)];
             return (
-              <div key={p.id} className="rounded-xl border border-white/10 bg-slate-900/50 p-4">
-                <h3 className="font-semibold mb-2">{p.name}</h3>
-                <div className="grid grid-cols-3 gap-2 text-sm">
-                  <div>
-                    <div className="text-[11px] uppercase text-slate-500">kcal</div>
-                    <Cell v={t?.kcal || 0} t={p.kcal_target} />
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase text-slate-500">Protein</div>
-                    <Cell v={t?.p || 0} t={p.p_target} />
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase text-slate-500">KH</div>
-                    <Cell v={t?.c || 0} t={p.c_target} />
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase text-slate-500">Fett</div>
-                    <Cell v={t?.f || 0} t={p.f_target} />
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase text-slate-500">Zucker</div>
-                    <Cell v={t?.sugar || 0} t={p.sugar_target} />
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase text-slate-500">Salz</div>
-                    <Cell v={t?.salt || 0} t={p.salt_target} />
+              <div key={p.id} className="overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
+                <div className="border-b border-white/10 bg-slate-800/60 px-4 py-2.5">
+                  <h3 className="font-semibold">{p.name}</h3>
+                  <div className="text-[11px] text-slate-500">
+                    Tagesziel: {p.kcal_target} kcal · {p.p_target} P · {p.c_target} C ·{" "}
+                    {p.f_target} F
+                    {p.sugar_target > 0 && ` · Zucker ${p.sugar_target} g`}
+                    {p.salt_target > 0 && ` · Salz ${p.salt_target} g`}
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  {t?.meals || 0} Mahlzeiten · Tag ist an allen 7 Wochen Tagen identisch
-                </p>
+
+                {/* Fortschrittsbalken je Makro */}
+                <div className="space-y-1.5 border-b border-white/10 px-4 py-3">
+                  <MacroBar label="kcal" val={tot?.kcal || 0} target={p.kcal_target} unit="" />
+                  <MacroBar label="Protein" val={tot?.p || 0} target={p.p_target} unit="g" />
+                  <MacroBar label="KH" val={tot?.c || 0} target={p.c_target} unit="g" />
+                  <MacroBar label="Fett" val={tot?.f || 0} target={p.f_target} unit="g" />
+                  <MacroBar label="Zucker" val={tot?.sugar || 0} target={p.sugar_target} unit="g" />
+                  <MacroBar label="Salz" val={tot?.salt || 0} target={p.salt_target} unit="g" />
+                </div>
+
+                {/* Slots */}
+                <div className="divide-y divide-white/5">
+                  {SLOT_ORDER.map((slot) => {
+                    const r = cell(p.id, slot);
+                    return (
+                      <div key={slot} className="flex items-center gap-3 px-4 py-2.5">
+                        <span className="w-20 shrink-0 text-[11px] uppercase tracking-wide text-slate-500">
+                          {SLOT_NAMES[slot]}
+                        </span>
+                        {r ? (
+                          <>
+                            <button
+                              onClick={() => openSwap(slot, p.id, p.name)}
+                              className="min-w-0 flex-1 truncate text-left text-sm hover:text-emerald-400"
+                              title="Klicken zum Austauschen"
+                            >
+                              {r.title}
+                            </button>
+                            <div className="flex gap-0.5">
+                              {SIZES.map((s) => (
+                                <button
+                                  key={s}
+                                  onClick={() => changeServings(p.id, slot, s)}
+                                  className={`rounded px-1.5 py-0.5 text-xs transition ${
+                                    r.servings === s
+                                      ? "bg-emerald-600 font-semibold text-white"
+                                      : "bg-slate-800 text-slate-400 hover:text-white"
+                                  }`}
+                                >
+                                  {s}×
+                                </button>
+                              ))}
+                            </div>
+                            <span className="w-14 shrink-0 text-right text-xs tabular-nums text-slate-500">
+                              {fmt(r.kcal)} kcal
+                            </span>
+                          </>
+                        ) : (
+                          <span className="flex-1 text-xs text-slate-600">— leer —</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="px-4 py-2 text-[11px] text-slate-600">
+                  {tot?.meals || 0} Mahlzeiten pro Tag · an allen 7 Wochentagen identisch
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {data?.hasPlan && (
-        <div className="rounded-xl border border-white/10 bg-slate-900/50 p-4 flex flex-wrap items-center gap-3">
+      {data.hasPlan && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-slate-900/50 p-4">
           <span className="text-sm font-medium">Vorlage speichern:</span>
           <input
             value={tplName}
             onChange={(e) => setTplName(e.target.value)}
-            placeholder={`z. B. „Mein ${template}-Tag“`}
-            className="flex-1 min-w-[180px] rounded-lg bg-slate-800 border border-white/10 px-3 py-2 text-sm placeholder:text-slate-600"
+            placeholder={`z. B. „Mein ${data.template}-Tag“`}
+            className="min-w-[180px] flex-1 rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-sm placeholder:text-slate-600"
           />
           <button
             onClick={saveTemplate}
             disabled={savingTpl || !tplName.trim()}
-            className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm font-medium disabled:opacity-40"
+            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-600 disabled:opacity-40"
           >
-            {savingTpl ? "Speichert…" : `Template ${template} als Vorlage speichern`}
+            {savingTpl ? "Speichert…" : "Als Vorlage speichern"}
           </button>
         </div>
       )}
 
-      {loading && (
-        <div className="text-sm text-slate-500 animate-pulse">Lade Plan…</div>
-      )}
-
       {/* Swap-Dialog */}
       {swapSlot && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSwapSlot(null)}>
-          <div className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-900 p-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setSwapSlot(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-900 p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
               <h3 className="font-semibold">
                 {SLOT_NAMES[swapSlot.slot]} austauschen · {swapSlot.profileName}
               </h3>
-              <button onClick={() => { setSwapSlot(null); setSuggestions(null); }} className="text-slate-500 hover:text-white">✕</button>
+              <button
+                onClick={() => {
+                  setSwapSlot(null);
+                  setSuggestions(null);
+                }}
+                className="text-slate-500 hover:text-white"
+              >
+                ✕
+              </button>
             </div>
-            <p className="text-xs text-slate-500 mb-3">
-              Sortiert nach bestem Ersatz für genau diese Position (KH/Fett hart, Protein am Ziel,
-              Zucker/Salz best-effort). Der Wechsel gilt für alle 7 Tage von Template {template};
-              die Einkaufsliste aktualisiert sich automatisch.
+            <p className="mb-3 text-xs text-slate-500">
+              Sortiert nach bestem Ersatz für genau diese Position (KH/Fett hart,
+              Protein am Ziel, Zucker/Salz best-effort). Der Wechsel gilt für alle
+              7 Tage; die Einkaufsliste aktualisiert sich automatisch.
             </p>
-            {suggestLoading && <div className="text-sm text-slate-500 animate-pulse">Lade Vorschläge…</div>}
+            {suggestLoading && (
+              <div className="animate-pulse text-sm text-slate-500">Lade Vorschläge…</div>
+            )}
             {suggestions && suggestions.length === 0 && (
               <div className="text-sm text-slate-500">Keine Alternativen für diesen Slot.</div>
             )}
-            <div className="space-y-1 max-h-[50vh] overflow-y-auto">
+            <div className="max-h-[50vh] space-y-1 overflow-y-auto">
               {suggestions?.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => doSwap(s)}
                   disabled={s.current || busy !== null}
-                  className={`w-full text-left rounded-lg px-3 py-2 flex items-center justify-between gap-2 hover:bg-slate-800 disabled:opacity-50 ${
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left hover:bg-slate-800 disabled:opacity-50 ${
                     s.rank === 1 && !s.current ? "bg-emerald-900/30" : ""
                   }`}
                 >
                   <div className="min-w-0">
-                    <div className="text-sm truncate">
-                      <span className="text-slate-500 mr-1">#{s.rank}</span> {s.title}
+                    <div className="truncate text-sm">
+                      <span className="mr-1 text-slate-500">#{s.rank}</span> {s.title}
                       {s.current && <span className="ml-2 text-[11px] text-slate-500">(aktuell)</span>}
                       {s.rank === 1 && !s.current && (
                         <span className="ml-2 text-[11px] text-emerald-400">Beste Wahl</span>
@@ -409,7 +509,8 @@ export default function PlanClient() {
                       {s.servings}× · {fmt(s.kcal)} kcal · P {fmt(s.p, 1)} · C {fmt(s.c, 1)} · F {fmt(s.f, 1)}
                       {s.sugar > 0 && ` · Zucker ${fmt(s.sugar, 1)} g`}
                       {s.salt > 0 && ` · Salz ${fmt(s.salt, 2)} g`}
-                      {s.deltaKcal !== 0 && ` · Δkcal ${s.deltaKcal > 0 ? "+" : ""}${fmt(s.deltaKcal)}`}
+                      {s.deltaKcal !== 0 &&
+                        ` · Δkcal ${s.deltaKcal > 0 ? "+" : ""}${fmt(s.deltaKcal)}`}
                     </div>
                   </div>
                 </button>

@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { currentWeekKey, shiftWeek, weekTemplate } from "@/lib/week";
 
 const SLOT_NAMES: Record<string, string> = {
   B: "Frühstück",
@@ -27,9 +28,11 @@ export default function VorlagenClient() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
-  const [applyTo, setApplyTo] = useState<"A" | "B">("A");
+  const [applyOffset, setApplyOffset] = useState<0 | 1>(0);
   const [editing, setEditing] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
+  const curWeek = currentWeekKey();
+  const nextWeek = shiftWeek(curWeek, 1);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/templates", { cache: "no-store" });
@@ -42,9 +45,10 @@ export default function VorlagenClient() {
   }, [load]);
 
   const apply = async (v: Vorlage) => {
+    const wk = applyOffset === 0 ? curWeek : nextWeek;
     if (
       !confirm(
-        `Vorlage „${v.name}“ in die Woche einplanen? Das überschreibt Template ${applyTo} (alle 7 Tage) und aktualisiert die Einkaufsliste.`
+        `Vorlage „${v.name}“ in Woche ${wk} (Template ${weekTemplate(wk)}) einplanen? Das überschreibt den dortigen Plan (alle 7 Tage) und aktualisiert die Einkaufsliste.`
       )
     )
       return;
@@ -52,7 +56,7 @@ export default function VorlagenClient() {
     const r = await fetch("/api/templates/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template_id: v.id, target: applyTo }),
+      body: JSON.stringify({ template_id: v.id, week: wk }),
     });
     const j = await r.json();
     setMsg(
@@ -118,25 +122,28 @@ export default function VorlagenClient() {
       <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-900/50 p-4">
         <span className="text-sm">Neue Vorlage anlegen:</span>
         <span className="text-sm text-slate-400">
-          im <a href="/plan" className="text-emerald-400 underline">Wochenplan</a> (Template A oder B) →
+          im <a href="/plan" className="text-emerald-400 underline">Wochenplan</a> einplanen →
           <span className="ml-2 inline-block rounded-lg bg-slate-800 px-3 py-1.5">„… als Vorlage speichern“</span>
         </span>
       </div>
 
-      <div className="flex items-center gap-3">
-        <span className="text-sm text-slate-400">Vorlagen einplanen auf Template:</span>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-sm text-slate-400">Vorlagen einplanen in Woche:</span>
         <div className="flex rounded-lg overflow-hidden border border-white/10">
-          {(["A", "B"] as const).map((t) => (
+          {([
+            [0, `${curWeek} · Template ${weekTemplate(curWeek)}`],
+            [1, `${nextWeek} · Template ${weekTemplate(nextWeek)}`],
+          ] as Array<[0 | 1, string]>).map(([off, label]) => (
             <button
-              key={t}
-              onClick={() => setApplyTo(t)}
+              key={off}
+              onClick={() => setApplyOffset(off)}
               className={`px-4 py-1.5 text-sm font-medium ${
-                applyTo === t
+                applyOffset === off
                   ? "bg-emerald-600 text-white"
                   : "bg-slate-800/50 text-slate-400 hover:bg-slate-800"
               }`}
             >
-              {t}
+              {label}
             </button>
           ))}
         </div>
@@ -223,7 +230,7 @@ export default function VorlagenClient() {
                 disabled={busy === v.id}
                 className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium disabled:opacity-50"
               >
-                {busy === v.id ? "Plane ein…" : `Auf Template ${applyTo} einplanen`}
+                {busy === v.id ? "Plane ein…" : `In Woche ${applyOffset === 0 ? curWeek : nextWeek} einplanen`}
               </button>
               <span className="text-[11px] text-slate-600">
                 angelegt {new Date(v.created_at).toLocaleDateString("de-DE")}

@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
-import { currentWeekKey } from "@/lib/week";
+import { currentWeekKey, weekTemplate } from "@/lib/week";
 
 // Vorlagen (eigene Template-Vorlagen):
 // GET  → Liste mit Rezept-Titeln je Slot
 // POST → neue Vorlage aus dem aktuellen Plan speichern
-//        {name, week?, template: "A"|"B"}
+//        {name, week?} — Template = das der Woche (ungerade A / gerade B)
 
 // slots_json: Slot → Profil-ID → {recipe_id, servings}
 // Persönliche Slots dürfen je Profil unterschiedliche Rezepte haben;
@@ -93,23 +93,22 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
   const body = await readJson(req);
   if (body === null) return badJson;
-  const { name, week, template } = body as {
+  const { name, week } = body as {
     name?: string;
     week?: string;
-    template?: string;
   };
   const nm = (name || "").trim();
   if (!nm)
     return NextResponse.json({ error: "Name fehlt" }, { status: 400 });
   if (nm.length > 60)
     return NextResponse.json({ error: "Name zu lang (max. 60 Zeichen)" }, { status: 400 });
-  const tpl = template === "A" || template === "B" ? template : "A";
   const wk = week || currentWeekKey();
+  const tpl = weekTemplate(wk); // Woche bestimmt das Template
 
   const slots = buildSlotsJson(wk, tpl);
   if (!slots)
     return NextResponse.json(
-      { error: `Kein Plan für ${wk} / Template ${tpl} vorhanden — zuerst generieren.` },
+      { error: `Kein Plan für ${wk} (Template ${tpl}) vorhanden — zuerst generieren.` },
       { status: 400 }
     );
   const clash = db

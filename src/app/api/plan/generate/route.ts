@@ -2,18 +2,26 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { generatePlan } from "@/lib/engine";
-import { currentWeekKey, weekTemplate } from "@/lib/week";
+import { currentWeekKey, shiftWeek, weekNum } from "@/lib/week";
 
-// Wochenplan generieren: 2 Templates (A und B), jeweils EIN Tag, der
-// innerhalb des Templates an allen 7 Tagen identisch gilt.
-// Template-Bedeutung: ungrade ISO-Woche → A, gerade → B (2x2-Rotation).
-// Beide Templates werden je Woche gespeichert; die Einkaufsliste zählt
-// das für die Woche aktive Template (Standard = Rotation).
-export async function POST() {
+// Wochenplan generieren: 2 Templates (A und B), je EIN Tag, der innerhalb
+// des Templates an allen 7 Tagen identisch gilt.
+// EINE Woche = EINES Template: A → ungerade Woche, B → die Folgewoche.
+// {week?} optional — Standard: aktuelle Woche; das Paar richtet sich
+// nach ihr (ungerade Woche W → A in W, B in W+1; gerade Woche W → A in W-1, B in W).
+export async function POST(req: Request) {
   const denied = await requireAuth();
   if (denied) return denied;
-  const week = currentWeekKey();
-  const tpl = weekTemplate(week);
+  let week = currentWeekKey();
+  try {
+    const body = await req.clone().json().catch(() => null);
+    if (body && typeof body.week === "string" && /^\d{4}-W\d{1,2}$/.test(body.week))
+      week = body.week;
+  } catch {
+    // Body optional
+  }
+  const aWeek = weekNum(week) % 2 === 1 ? week : shiftWeek(week, -1);
+  const bWeek = aWeek === week ? shiftWeek(aWeek, 1) : week;
 
   const profiles = db
     .prepare(
@@ -78,7 +86,8 @@ export async function POST() {
     );
   }
 
-  // Beide Templates schreiben, je 7 identische Tage.
+  // Beide Templates schreiben, je 7 identische Tage — A und B landen in
+  // ZWEI aufeinanderfolgenden Wochen (EINE Woche = EINES Template).
   const upsert = db.prepare(
     `INSERT INTO plan_meal(week_key, template_id, day, profile_id, slot, recipe_id, servings, kcal, p, c, f, sugar, salt)
      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -92,13 +101,13 @@ export async function POST() {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_slot ON
      plan_meal(week_key, template_id, day, profile_id, slot)`
   );
-  const writeTemplate = (tid: "A" | "B", dayPlan: typeof res.A) => {
+  const writeTemplate = (tid: "A" | "B", wk: string, dayPlan: typeof res.A) => {
     for (let day = 0; day < 7; day++) {
       for (const pd of dayPlan) {
         for (const slot of ["B", "M", "A", "S"] as const) {
           const ch = pd[slot];
           upsert.run(
-            week, tid, day, pd.profileId, slot, ch.recipe.id, ch.servings,
+            wk, tid, day, pd.profileId, slot, ch.recipe.id, ch.servings,
             ch.recipe.kcal * ch.servings,
             ch.recipe.p * ch.servings,
             ch.recipe.c * ch.servings,
@@ -111,15 +120,15 @@ export async function POST() {
     }
   };
   db.transaction(() => {
-    writeTemplate("A", res.A);
-    writeTemplate("B", res.B);
+    writeTemplate("A", aWeek, res.A);
+    writeTemplate("B", bWeek, res.B);
   })();
 
   return NextResponse.json({
     ok: true,
-    week,
-    templates: ["A", "B"],
-    active: tpl,
+    week: aWeek,
+    weeks: { A: aWeek, B: bWeek },
     ms: res.ms,
+    note: `Plan generiert (${res.ms} ms): Template A → Woche ${aWeek}, Template B → Woche ${bWeek}.`,
   });
 }

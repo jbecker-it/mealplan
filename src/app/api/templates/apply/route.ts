@@ -4,7 +4,8 @@ import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 import { currentWeekKey, weekTemplate } from "@/lib/week";
 
-// Vorlage in den Plan einplanen: {template_id, week?, target: "A"|"B"}
+// Vorlage in den Plan einplanen: {template_id, week?}
+// EINE Woche = EINES Template: ungerade Woche → A, gerade → B.
 // Schreibt alle 7 Tage des Ziel-Templates. Jede Vorlage trägt pro Slot und
 // Profil ihr eigenes Rezept + Portion — so bleiben persönliche Slots
 // (Frühstück/Snack) je Person erhalten.
@@ -20,15 +21,14 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
   const body = await readJson(req);
   if (body === null) return badJson;
-  const { template_id, week, target } = body as {
+  const { template_id, week } = body as {
     template_id?: number;
     week?: string;
-    target?: string;
   };
   if (!template_id)
     return NextResponse.json({ error: "template_id fehlt" }, { status: 400 });
   const wk = week || currentWeekKey();
-  const tgt = target === "A" || target === "B" ? target : weekTemplate(wk);
+  const tgt = weekTemplate(wk); // Woche bestimmt das Template
 
   const tpl = db
     .prepare("SELECT id, name, slots_json FROM template WHERE id = ?")

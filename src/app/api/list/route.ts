@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { currentWeekKey } from "@/lib/week";
+import { currentWeekKey, weekTemplate } from "@/lib/week";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 
@@ -28,11 +28,13 @@ export async function GET(req: NextRequest) {
        JOIN recipe_ingredient rri ON rri.recipe_id = pm.recipe_id
        JOIN ingredient i ON i.id = rri.ingredient_id
        JOIN recipe rm ON rm.id = pm.recipe_id
-       WHERE pm.week_key = ?
+       WHERE pm.week_key = ? AND pm.template_id = ?
        GROUP BY i.id, LOWER(rri.unit)
        ORDER BY i.category, i.name COLLATE NOCASE`
     )
-    .all(week) as Array<Record<string, unknown>>;
+    // Nur das für die Woche aktive Template (ungerade = A, gerade = B)
+    // zählt — sonst würde die Einkaufsliste A + B doppelt befüllen.
+    .all(week, weekTemplate(week)) as Array<Record<string, unknown>>;
 
   // Küchen-Einheiten auf die Einheiten der Zutat-Entität normieren
   // (z. B. "1 EL Sojasoße" + "150 ml Sojasoße" → eine Zeile in ml)
