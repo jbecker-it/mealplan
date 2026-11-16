@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  install.sh — Mealplan Web-App Installer (ohne Root, Debian/Ubuntu/Linux)
+#  install.sh — Mealplan Web-App Installer (Debian/Ubuntu/Linux)
 #
 #  Installiert:
-#    1. Node.js (falls fehlt: nach ~/.local/node — ohne Root)
-#    2. Die App (npm install + build)
-#    3. Startet den Server im Hintergrund (Port 3100)
+#    1. Grundvoraussetzungen (curl, python3 — per apt nachinstalliert, wenn
+#       Root; ohne Root wird mit klarer Anleitung abgebrochen)
+#    2. Node.js (falls fehlt: nach ~/.local/node, ohne Root möglich;
+#       fehlende System-Bibliotheken — z. B. libatomic.so.1 — per apt, wenn
+#       Root; sonst Fallback auf ältere LTS-Versionen)
+#    3. Die App (npm install + build)
+#    4. Startet den Server im Hintergrund (Port 3100)
 #
 #  So wird's ausgeführt:
 #    git clone https://github.com/jbecker-it/mealplan.git
@@ -23,9 +27,11 @@ set -euo pipefail
 PORT="${MP_PORT:-3100}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_MIN=20
+NODE_HOME="$HOME/.local/node"
 
 log()  { echo -e "\e[1;34m[mealplan]\e[0m $*"; }
 ok()   { echo -e "\e[1;32m[mealplan]\e[0m $*"; }
+warn() { echo -e "\e[1;33m[mealplan]\e[0m $*"; }
 die()  { echo -e "\e[1;31m[mealplan] FEHLER:\e[0m $*" >&2; exit 1; }
 
 echo
@@ -35,7 +41,42 @@ echo "  ╚═══════════════════════
 echo
 
 # -----------------------------------------------------------------------------
-log "Schritt 1/4: Node.js prüfen ... "
+# Helpers
+# -----------------------------------------------------------------------------
+have_apt() { [ "$(id -u)" -eq 0 ] && command -v apt-get >/dev/null 2>&1; }
+
+# apt_install PKG… — installiert Pakete (nur mit Root); liefert 1, wenn nicht möglich
+apt_install() {
+  have_apt || return 1
+  apt-get update -qq >/dev/null 2>&1 || true
+  apt-get install -y -qq "$@" >/dev/null 2>&1
+}
+
+# -----------------------------------------------------------------------------
+log "Schritt 1/5: Grundvoraussetzungen (curl, python3) ..."
+# -----------------------------------------------------------------------------
+if ! command -v curl >/dev/null 2>&1; then
+  log "curl fehlt — Installation per apt ..."
+  if apt_install curl ca-certificates; then
+    ok "curl installiert"
+  else
+    die "curl fehlt und konnte nicht automatisch installiert werden. Bitte ausführen (als Root/Sudo) und danach erneut 'bash install.sh':
+     apt-get install curl ca-certificates"
+  fi
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  log "python3 fehlt — Installation per apt ..."
+  if apt_install python3; then
+    ok "python3 installiert"
+  else
+    die "python3 fehlt und konnte nicht automatisch installiert werden. Bitte ausführen (als Root/Sudo) und danach erneut 'bash install.sh':
+     apt-get install python3"
+  fi
+fi
+ok "curl + python3 vorhanden"
+
+# -----------------------------------------------------------------------------
+log "Schritt 2/5: Node.js prüfen ..."
 # -----------------------------------------------------------------------------
 node_ok() {
   command -v node >/dev/null 2>&1 || return 1
@@ -47,41 +88,102 @@ node_ok() {
 if node_ok; then
   ok "Node.js $(node -v) vorhanden"
 else
-  log "Node.js fehlt oder ist zu alt — Installation nach ~/.local/node (ohne Root) ..."
-  if ! command -v curl >/dev/null 2>&1; then die "curl fehlt — bitte curl installieren"; fi
+  log "Node.js fehlt oder ist zu alt — Installation nach $NODE_HOME ..."
   ARCH="$(uname -m)"
   case "$ARCH" in
     x86_64|amd64) NARCH="x64" ;;
     aarch64|arm64) NARCH="arm64" ;;
     *) die "Nicht unterstützte CPU-Architektur: $ARCH" ;;
   esac
-  NODE_VER="$(curl -fsSL https://nodejs.org/dist/index.json \
-    | python3 -c 'import json,sys; print([x["version"] for x in json.load(sys.stdin) if x["lts"]][0][1:])')"
-  log "Lade Node.js v$NODE_VER ($NARCH) ..."
-  curl -fsSL -o /tmp/node.tar.xz \
-    "https://nodejs.org/dist/v$NODE_VER/node-v$NODE_VER-linux-$NARCH.tar.xz"
-  mkdir -p "$HOME/.local/node"
-  tar -xJf /tmp/node.tar.xz -C "$HOME/.local/node" --strip-components=1
+
+  # Die 3 aktuellsten LTS-Hauptversionen (neueste zuerst), nur je eine Patch-Version
+  LTS_LIST="$(curl -fsSL https://nodejs.org/dist/index.json \
+    | python3 -c '
+import json, sys
+best, order = {}, []
+for x in json.load(sys.stdin):
+    if not x["lts"]:
+        continue
+    maj = x["version"].split(".")[0]
+    if maj not in best:
+        best[maj] = x["version"]
+        order.append(maj)
+    if len(order) == 3:
+        break
+print(" ".join(best[m] for m in order))
+')"
+
+  SUDO_HINT=""
+  NODE_OK=0
+  for NODE_VER in $LTS_LIST; do
+    log "Versuche Node.js $NODE_VER ($NARCH) ..."
+    rm -rf "$NODE_HOME"
+    mkdir -p "$NODE_HOME"
+    if ! curl -fsSL -o /tmp/node.tar.xz \
+         "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-linux-$NARCH.tar.xz" 2>/dev/null; then
+      continue
+    fi
+    tar -xJf /tmp/node.tar.xz -C "$NODE_HOME" --strip-components=1
+    rm -f /tmp/node.tar.xz
+    if "$NODE_HOME/bin/node" -v >/dev/null 2>&1; then
+      NODE_OK=1
+      break
+    fi
+    # Diagnose: fehlende Shared Libraries (z. B. libatomic.so.1)?
+    MISSING="$(ldd "$NODE_HOME/bin/node" 2>/dev/null | awk '/not found/{print $1}' | sort -u)"
+    if [ -n "$MISSING" ]; then
+      # libatomic.so.1 -> libatomic1 (Debian-Paketname)
+      PKGS="$(printf '%s\n' $MISSING | python3 -c '
+import sys
+for l in sys.stdin.read().split():
+    base = l.split(".so")[0]
+    rest = l.rsplit(".so.", 1)[1] if ".so." in l else ""
+    print(base + (rest if rest.isdigit() else ""))
+')"
+      warn "Fehlende System-Bibliothek(en): $MISSING"
+      if apt_install $PKGS; then
+        log "System-Bibliotheken installiert: $PKGS"
+        if "$NODE_HOME/bin/node" -v >/dev/null 2>&1; then
+          NODE_OK=1
+          break
+        fi
+      else
+        SUDO_HINT="$PKGS"
+      fi
+    fi
+  done
   rm -f /tmp/node.tar.xz
-  export PATH="$HOME/.local/node/bin:$PATH"
-  ok "Node.js $(node -v) installiert nach ~/.local/node"
-  log "Tipp: Diese Zeile in die ~/.bashrc ergänzen:"
-  echo "     export PATH=\"$HOME/.local/node/bin:\$PATH\""
+
+  if [ "$NODE_OK" -ne 1 ]; then
+    if [ -n "$SUDO_HINT" ]; then
+      die "Fehlende System-Bibliotheken konnten nicht automatisch installiert werden. Bitte ausführen und danach erneut 'bash install.sh':
+     apt-get install $SUDO_HINT"
+    fi
+    die "Konnte kein lauffähiges Node.js installieren (Versions-Fallback ausgeschöpft). Bitte erneut versuchen: bash install.sh"
+  fi
+  export PATH="$NODE_HOME/bin:$PATH"
+  ok "Node.js $(node -v) installiert nach $NODE_HOME"
+  log "Tipp: In die ~/.bashrc ergänzen:"
+  echo "     export PATH=\"$NODE_HOME/bin:\$PATH\""
 fi
 
 # -----------------------------------------------------------------------------
-log "Schritt 2/4: Abhängigkeiten installieren (npm install) ..."
+log "Schritt 3/5: Abhängigkeiten installieren (npm install) ..."
 # -----------------------------------------------------------------------------
 cd "$DIR"
+# Build-Tools für native Module (better-sqlite3) — best effort, nur mit Root
+if have_apt; then
+  apt_install make g++ >/dev/null 2>&1 || true
+fi
 npm install --no-audit --no-fund
 
 # -----------------------------------------------------------------------------
-log "Schritt 3/4: App bauen (npm run build) ..."
+log "Schritt 4/5: App bauen (npm run build) ..."
 # -----------------------------------------------------------------------------
 npm run build
 
 # -----------------------------------------------------------------------------
-log "Schritt 4/4: Server starten (Port $PORT) ..."
+log "Schritt 5/5: Server starten (Port $PORT) ..."
 # -----------------------------------------------------------------------------
 mkdir -p "$DIR/logs"
 echo "PORT=$PORT" > "$DIR/.mealplan.env"

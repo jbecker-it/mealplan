@@ -12,9 +12,12 @@ git clone https://github.com/jbecker-it/mealplan.git
 cd mealplan && bash install.sh
 ```
 
-Der Installer prüft Node.js (installiert es bei Bedarf automatisch nach
-`~/.local/node`, ohne Root), installiert die Abhängigkeiten, baut die App
-und startet den Server auf **Port 3100**.
+Der Installer richtet automatisch ein: curl, python3 und Node.js
+(neueste LTS, bei Problemen Fallback auf ältere Versionen), fehlende
+System-Bibliotheken (z. B. `libatomic1`) und Build-Tools — per `apt`, wenn
+als Root ausgeführt; ohne Root wird mit klarer Anleitung abgebrochen.
+Danach installiert er die Abhängigkeiten, baut die App und startet den
+Server auf **Port 3100**.
 
 Danach: Browser öffnen → `http://<server-ip>:3100` → beim ersten Start das
 App-Passwort wählen (einmalig, im Browser — kein Terminal-Input nötig).
