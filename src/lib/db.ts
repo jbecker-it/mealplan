@@ -9,11 +9,9 @@ export const DB_PATH =
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-export const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+type DbInstance = InstanceType<typeof Database>;
 
-db.exec(`
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS profile (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -71,7 +69,7 @@ CREATE TABLE IF NOT EXISTS recipe_ingredient (
 
 CREATE TABLE IF NOT EXISTS step (
   id INTEGER PRIMARY KEY,
-  recipe_id INTEGER NOT NULL REFERENCES recipe(id) ON DELETE CASCADE,
+  recipe_id INTEGER NOT NULL,
   text TEXT NOT NULL,
   sort INTEGER DEFAULT 0
 );
@@ -113,13 +111,61 @@ CREATE TABLE IF NOT EXISTS session (
   token TEXT PRIMARY KEY,
   expiry INTEGER NOT NULL
 );
-`);
+`;
 
-// Migration: erlaubte Slots pro Rezept (B=Frühstück, M=Mittag, A=Abend, S=Snack)
-try {
-  db.exec("ALTER TABLE recipe ADD COLUMN slots TEXT DEFAULT 'B,M,A,S'");
-} catch {
-  // Spalte existiert bereits
+function createDb(): DbInstance {
+  const d = new Database(DB_PATH);
+  d.pragma("journal_mode = WAL");
+  d.pragma("foreign_keys = ON");
+  d.exec(SCHEMA);
+  // Migration: erlaubte Slots pro Rezept (B=Frühstück, M=Mittag, A=Abend, S=Snack)
+  try {
+    d.exec("ALTER TABLE recipe ADD COLUMN slots TEXT DEFAULT 'B,M,A,S'");
+  } catch {
+    // Spalte existiert bereits
+  }
+  ensureSeed(d);
+  return d;
 }
 
-ensureSeed(db);
+// EINE Verbindung pro Prozess, über globalThis geteilt:
+// Next.js läuft Server-Components (Layout) und API-Routen in SEPARATEN
+// Modul-Kontexten — je eigener Modul-Instanz wäre je eine eigene
+// SQLite-Connection entstanden, und closeDb() (Restore/Reset) hätte
+// nur eine davon geschlossen: Die anderen würden auf der alten,
+// getauschten Datei hängen (Stale-Data + „connection is not open“).
+// globalThis ist pro Node-Prozess eindeutig → ein einziger Handle.
+const g = globalThis as unknown as { __mpDb?: DbInstance | null };
+
+function ensure(): DbInstance {
+  if (g.__mpDb) return g.__mpDb;
+  g.__mpDb = createDb();
+  return g.__mpDb;
+}
+
+// Stabiler Export: alle bestehenden `import { db }` funktionieren weiter.
+// Der Handle kann per closeDb() geschlossen und beim nächsten Zugriff
+// automatisch neu geöffnet werden (nötig für den Restore-Dateitausch).
+export const db: DbInstance = new Proxy({} as DbInstance, {
+  get(_target, prop) {
+    const cur = ensure();
+    const v = (cur as unknown as Record<PropertyKey, unknown>)[prop];
+    if (typeof v === "function")
+      return (v as (...args: unknown[]) => unknown).bind(cur);
+    return v;
+  },
+  has(_target, prop) {
+    return prop in (ensure() as unknown as object);
+  },
+});
+
+export function closeDb(): void {
+  if (g.__mpDb) {
+    try {
+      g.__mpDb.close();
+    } catch {
+      // ignorieren
+    }
+    g.__mpDb = null;
+  }
+}

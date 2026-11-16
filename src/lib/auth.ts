@@ -9,33 +9,35 @@ import { db } from "./db";
 // (Map) ist dort nie sichtbar. DB-Datei wird dagegen von beiden geteilt.
 const SESSION_TTL = 30 * 86400 * 1000; // 30 Tage
 
-const insSession = db.prepare(
-  "INSERT INTO session (token, expiry) VALUES (?, ?)"
-);
-const selSession = db.prepare(
-  "SELECT expiry FROM session WHERE token = ?"
-);
-const delSession = db.prepare("DELETE FROM session WHERE token = ?");
+// WICHTIG: Prepared Statements erst zur AUFRUFZEIT vorbereiten (nie
+// Modul-Ebene) — nach einem Restore wird der DB-Handle geschlossen und
+// neu geöffnet, Modul-Ebene-Statements würden auf dem toten alten
+// Handle hängen ("The database connection is not open").
 
 export function issueSession(): string {
   const token = crypto.randomBytes(24).toString("hex");
-  insSession.run(token, Date.now() + SESSION_TTL);
+  db.prepare("INSERT INTO session (token, expiry) VALUES (?, ?)").run(
+    token,
+    Date.now() + SESSION_TTL
+  );
   return token;
 }
 
 export function isAuthed(token?: string | null): boolean {
   if (!token) return false;
-  const row = selSession.get(token) as { expiry: number } | undefined;
+  const row = db
+    .prepare("SELECT expiry FROM session WHERE token = ?")
+    .get(token) as { expiry: number } | undefined;
   if (!row) return false;
   if (row.expiry < Date.now()) {
-    delSession.run(token);
+    db.prepare("DELETE FROM session WHERE token = ?").run(token);
     return false;
   }
   return true;
 }
 
 export function deleteSession(token: string | null | undefined): void {
-  if (token) delSession.run(token);
+  if (token) db.prepare("DELETE FROM session WHERE token = ?").run(token);
 }
 
 export function isSetup(): boolean {

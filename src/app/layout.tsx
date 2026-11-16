@@ -21,6 +21,7 @@ const LINKS = [
   ["/ingredients", "Zutaten"],
   ["/import", "Import"],
   ["/profiles", "Profile"],
+  ["/settings", "Einstellungen"],
 ] as const;
 
 export default async function RootLayout({
