@@ -1,260 +1,279 @@
-// Makro-Engine — deterministischer 1:1-Port von mealplan-engine-proto.py
-// Diskrete Portionsgrößen {0.5, 1.0, 1.5}; Slot M+A gemeinsam (gleiches Rezept), B+S getrennt.
+// Mealplan-Optimizer — 2x2-Template-Modell (Stand 2026-11-16)
+//
+// Ein Template = EINE Tag-Planung (4 Slots × 2 Profile), die innerhalb des
+// Templates an allen 7 Tagen der Woche identisch gilt (Meal-Prep-Logik).
+// Template A und B werden unabhängig generiert; B wird bestraft, Rezepte
+// zu verwenden, die A schon nutzt (Abwechslung zwischen den Wochentypen).
+//
+// Constraint-Hierarchie (Vorgabe Johannes, 2026-11-16):
+//  1. HARD: Kohlenhydrate und Fett dürfen die Tagesziele NICHT überschreiten
+//     (hohe Strafe → der Optimizer meidet Überschreitung fast immer).
+//  2. Protein: so nah wie möglich am Tagesmaximum (Defizit hart bestraft,
+//     Überschuss nur leicht).
+//  3. kcal: möglichst nah am Ziel (weich).
+//  4. SOFT: Zucker und Salz best-effort unter dem Tagesziel (nur Überschuss
+//     bestraft; Ziel 0 = unbeachtlich).
+//
+// Diskrete Portionen: 0.5, 1, 1.5. Deterministisch: feste Iterationsreihenfolge.
 
-export interface Recipe {
+export interface RecipeOpt {
   id: number;
-  name: string;
-  K: number;
-  P: number;
-  C: number;
-  F: number;
-  Su?: number; // Zucker pro Portion (g)
-  Sa?: number; // Salz pro Portion (g)
-  slots: SlotKey[];
+  title: string;
+  slots: string[]; // erlaubte Slots, z. B. ["B","M","A"]
+  kcal: number; // pro Portion (1.0)
+  p: number;
+  c: number;
+  f: number;
+  Su?: number | null; // Zucker g/Portion (best-effort-Makro)
+  Sa?: number | null; // Salz g/Portion (best-effort-Makro)
 }
 
 export interface Person {
-  name: string;
+  id: number;
+  K: number; // kcal-Ziel
+  P: number; // Protein-Ziel
+  C: number; // Kohlenhydrat-Ziel (hart)
+  F: number; // Fett-Ziel (hart)
+  SuT?: number; // Zucker-Ziel (best-effort, 0 = unbeachtlich)
+  SaT?: number; // Salz-Ziel (best-effort, 0 = unbeachtlich)
+  inc: string[];
+  exc: string[];
+}
+
+export interface SlotChoice {
+  recipe: RecipeOpt;
+  servings: number;
+}
+
+// Ein Tag für eine Person — innerhalb eines Templates an 7 Tagen identisch.
+export interface PersonDay {
+  profileId: number;
+  B: SlotChoice;
+  M: SlotChoice;
+  A: SlotChoice;
+  S: SlotChoice;
+}
+
+export interface PlanResult {
+  A: PersonDay[]; // genau 2 Einträge (Person 0, Person 1)
+  B: PersonDay[];
+  ms: number;
+}
+
+const SIZES = [0.5, 1, 1.5];
+const SLOTS = ["B", "M", "A", "S"] as const;
+type Slot = (typeof SLOTS)[number];
+
+const SLOT_KCAL: Record<Slot, number> = { B: 0.22, M: 0.35, A: 0.32, S: 0.11 };
+const SLOT_P: Record<Slot, number> = { B: 0.14, M: 0.33, A: 0.33, S: 0.2 };
+
+// ---- Gewichte der Objective-Funktion (siehe Header-Hierarchie) ----
+const HARD = 5.0; // C/F-Überschreitung (harte Tagesobergrenze)
+const P_SHORT = 1.2; // Protein unter Ziel (so nah wie möglich am Maximum)
+const P_OVER = 0.3; // Protein über Ziel (leicht)
+const K_CAL = 0.8; // kcal-Abweichung (weich)
+const SOFT = 0.4; // Zucker/Salz-Überschuss (best-effort)
+const SLOT_FIT = 0.15; // Slot-Anteile (kcal + Protein)
+const DUP = 1.0; // gleiche Rezepte innerhalb einer Person
+const CROSS = 0.6; // Rezepte, die Template A schon nutzt (nur für B)
+
+export interface MacroTotals {
   K: number;
   P: number;
   C: number;
   F: number;
-  SuT?: number; // Tages-Ziel Zucker (g), 0 = unbeachtlich
-  SaT?: number; // Tages-Ziel Salz (g), 0 = unbeachtlich
-  split: Record<SlotKey, number>;
+  Su: number;
+  Sa: number;
 }
 
-export const SLOT_KEYS = ["B", "M", "A", "S"] as const;
-export type SlotKey = (typeof SLOT_KEYS)[number];
-export const SLOT_NAMES: Record<SlotKey, string> = {
-  B: "Frühstück",
-  M: "Mittag",
-  A: "Abend",
-  S: "Snack",
-};
-export const SIZES = [0.5, 1.0, 1.5];
-const SHARED: Record<SlotKey, boolean> = { B: false, M: true, A: true, S: false };
-
-function allows(r: Recipe, k: SlotKey): boolean {
-  return !r.slots || r.slots.length === 0 || r.slots.includes(k);
+export interface PersonTargets {
+  K: number;
+  P: number;
+  C: number;
+  F: number;
+  SuT?: number;
+  SaT?: number;
 }
 
-type Sel = Array<[Recipe, number]>;
-export interface PlanCell {
-  recipeId: number;
-  servings: number;
-}
-export type PersonPlan = (PlanCell | null)[]; // Index = Slot-Index (B,M,A,S)
-export type DayPlan = PersonPlan[]; // [personIdx]
-export interface TemplateResult {
-  A: DayPlan[];
-  B: DayPlan[];
+function safeDiv(x: number, d: number): number {
+  return d > 0 ? x / d : 0;
 }
 
-function totals(sel: Sel | null | undefined): [number, number, number, number, number, number] {
-  if (!sel) return [0, 0, 0, 0, 0, 0];
-  let K = 0, P = 0, C = 0, F = 0, Su = 0, Sa = 0;
-  for (const cell of sel) {
-    if (!cell) continue;
-    const [r, s] = cell;
-    K += r.K * s;
-    P += r.P * s;
-    C += r.C * s;
-    F += r.F * s;
-    Su += (r.Su ?? 0) * s;
-    Sa += (r.Sa ?? 0) * s;
+// Reine Makro-Bewertung eines Tages (ohne Slot-Fit/Abwechslung).
+// Wird auch von der Swap-Vorschlags-API verwendet.
+export function personObjective(t: MacroTotals, per: PersonTargets): number {
+  if (t.K === 0) return 1e9;
+  let obj = 0;
+  obj += HARD * safeDiv(Math.max(0, t.C - per.C), per.C);
+  obj += HARD * safeDiv(Math.max(0, t.F - per.F), per.F);
+  obj += (t.P >= per.P ? P_OVER : P_SHORT) * safeDiv(Math.abs(t.P - per.P), per.P);
+  obj += K_CAL * safeDiv(Math.abs(t.K - per.K), per.K);
+  obj += per.SuT ? SOFT * safeDiv(Math.max(0, t.Su - per.SuT), per.SuT) : 0;
+  obj += per.SaT ? SOFT * safeDiv(Math.max(0, t.Sa - per.SaT), per.SaT) : 0;
+  return obj;
+}
+
+function totalsOf(day: PersonDay): MacroTotals {
+  const t: MacroTotals = { K: 0, P: 0, C: 0, F: 0, Su: 0, Sa: 0 };
+  for (const s of SLOTS) {
+    const { recipe, servings } = day[s];
+    t.K += recipe.kcal * servings;
+    t.P += recipe.p * servings;
+    t.C += recipe.c * servings;
+    t.F += recipe.f * servings;
+    t.Su += (recipe.Su ?? 0) * servings;
+    t.Sa += (recipe.Sa ?? 0) * servings;
   }
-  return [K, P, C, F, Su, Sa];
+  return t;
 }
 
-export function personObj(sel: Sel | null | undefined, p: Person, pen: Map<string, number>): number {
-  const [K, P, C, F, Su, Sa] = totals(sel);
-  if (K === 0) return 1e9; // noch nicht vollständig gefüllt
-  const obj =
-    1.0 * (Math.abs(P - p.P) / p.P) +
-    0.8 * (Math.abs(K - p.K) / p.K) +
-    0.3 * Math.abs(C / (C + F) - p.C / (p.C + p.F));
-  // Zucker/Salz: nur ÜBERSCHUSS über das Tagesziel bestrafen
-  // (weniger Zucker/Salz ist gut; Ziel 0 = unbeachtlich)
-  let suPen = 0;
-  if (p.SuT && p.SuT > 0) suPen += 0.4 * Math.max(0, Su - p.SuT) / p.SuT;
-  if (p.SaT && p.SaT > 0) suPen += 0.4 * Math.max(0, Sa - p.SaT) / p.SaT;
-  let slotPen = 0;
-  for (let i = 0; i < 4; i++) {
-    const cell = sel?.[i];
-    if (!cell) continue;
-    const [r, s] = cell;
-    const sk = p.split[SLOT_KEYS[i]];
-    const tP = (p.P * sk) / p.K; // Protein-Ziel proportional zum kcal-Anteil
-    slotPen +=
-      0.15 * (Math.abs(s * r.K - sk) / sk) +
-      0.1 * (Math.abs(s * r.P - tP) / Math.max(tP, 1));
+// Gesamtbewertung eines Tages für eine Person (Makros + Slot-Fit + Abwechslung).
+function personDayObjective(day: PersonDay, per: Person): number {
+  const t = totalsOf(day);
+  if (t.K === 0) return 1e9;
+  let obj = personObjective(t, per);
+  for (const s of SLOTS) {
+    const { recipe, servings } = day[s];
+    obj += SLOT_FIT * (Math.abs(recipe.kcal * servings - SLOT_KCAL[s] * per.K) / per.K);
+    obj += SLOT_FIT * (Math.abs(recipe.p * servings - SLOT_P[s] * per.P) / per.P) * 0.7;
   }
-  const names = (sel ?? []).filter((c): c is [Recipe, number] => !!c).map(([r]) => r.name);
-  const uniq = new Set(names).size;
-  const dup = uniq < names.length ? 0.4 * (names.length - uniq) : 0;
-  let rep = 0;
-  for (const cell of sel ?? []) if (cell) rep += 0.5 * (pen.get(cell[0].name) ?? 0);
-  return obj + slotPen + dup + rep + suPen;
+  const seen = new Map<number, number>();
+  for (const s of SLOTS) {
+    const id = day[s].recipe.id;
+    seen.set(id, (seen.get(id) ?? 0) + 1);
+  }
+  for (const n of seen.values()) obj += DUP * (n * (n - 1)) / 2;
+  return obj;
 }
 
-function dayObj(day: Sel[], persons: Person[], pens: Map<string, number>[]): number {
-  return day.reduce((a, sel, i) => a + personObj(sel, persons[i], pens[i]), 0);
-}
-
-function slotFit(r: Recipe, s: number, p: Person, i: number): number {
-  const sk = p.split[SLOT_KEYS[i]];
-  const tP = (p.P * sk) / p.K;
-  return Math.abs(s * r.K - sk) / sk + Math.abs(s * r.P - tP) / Math.max(tP, 1);
-}
-
-function initDay(
+function totalObjective(
+  days: PersonDay[],
   persons: Person[],
-  recipes: Recipe[],
-  pens: Map<string, number>[]
-): Sel[] {
-  const day: Sel[] = persons.map(() => new Array(4).fill(null) as Sel);
-  for (let i = 0; i < 4; i++) {
-    if (SHARED[SLOT_KEYS[i]]) {
-      const pool = recipes.filter((r) => allows(r, SLOT_KEYS[i]));
-      let best: { r: Recipe; s0: number; s1: number; v: number } | null = null;
-      for (const r of pool)
-        for (const s0 of SIZES)
-          for (const s1 of SIZES) {
-            const v =
-              slotFit(r, s0, persons[0], i) +
-              slotFit(r, s1, persons[1], i) +
-              (pens[0].get(r.name) ?? 0);
-            if (!best || v < best.v) best = { r, s0, s1, v };
-          }
-      if (best) {
-        day[0][i] = [best.r, best.s0];
-        day[1][i] = [best.r, best.s1];
-      }
-    } else {
-      const pool = recipes.filter((r) => allows(r, SLOT_KEYS[i]));
-      for (let pi = 0; pi < persons.length; pi++) {
-        let best: { r: Recipe; s: number; v: number } | null = null;
-        for (const r of pool)
-          for (const s of SIZES) {
-            const v = slotFit(r, s, persons[pi], i) + (pens[pi].get(r.name) ?? 0);
-            if (!best || v < best.v) best = { r, s, v };
-          }
-        if (best) day[pi][i] = [best.r, best.s];
+  recs: RecipeOpt[],
+  recsA?: Set<number>
+): number {
+  let total = 0;
+  for (let i = 0; i < days.length; i++) {
+    total += personDayObjective(days[i], persons[i] ?? persons[0]);
+    if (recsA) {
+      for (const s of SLOTS) {
+        if (recsA.has(days[i][s].recipe.id)) total += CROSS;
       }
     }
   }
-  return day;
+  return total;
 }
 
-function optimizeDay(
-  day0: Sel[],
+function allowed(rec: RecipeOpt, slot: Slot, per: Person): boolean {
+  if (!rec.slots.includes(slot)) return false;
+  const t = rec.title.toLowerCase();
+  for (const w of per.exc) if (w && t.includes(w.toLowerCase())) return false;
+  return true;
+}
+
+function candidates(
+  recs: RecipeOpt[],
+  slot: Slot,
+  per: Person,
+  avoid?: Set<number>,
+  limit = 18
+): RecipeOpt[] {
+  const out = recs.filter((r) => allowed(r, slot, per) && !(avoid?.has(r.id)));
+  out.sort(
+    (a, b) =>
+      Math.abs(a.kcal - SLOT_KCAL[slot] * per.K) - Math.abs(b.kcal - SLOT_KCAL[slot] * per.K)
+  );
+  return out.slice(0, limit);
+}
+
+function initial(persons: Person[], recs: RecipeOpt[]): PersonDay[] {
+  return persons.map((per, i) => {
+    const day: PersonDay = {
+      profileId: per.id,
+      B: { recipe: recs[0], servings: 1 },
+      M: { recipe: recs[0], servings: 1 },
+      A: { recipe: recs[0], servings: 1 },
+      S: { recipe: recs[0], servings: 1 },
+    };
+    for (const slot of SLOTS) {
+      const c = candidates(recs, slot, per, undefined, 6);
+      if (c.length) {
+        // deterministisch: erster passierbarer Kandidat, ggf. Portion 0.5/1.5
+        day[slot] = {
+          recipe: c[i % c.length],
+          servings: SIZES[(i + SLOTS.indexOf(slot)) % SIZES.length],
+        };
+      }
+    }
+    return day;
+  });
+}
+
+// Ein Tag optimieren: beste (Rezept, Portion) je Slot pro Person.
+// Gemeinsame Slots (Mittag/Abend) werden für beide Personen mit demselben
+// Rezept besetzt, aber mit jeweils eigener Portion.
+function optimize(
   persons: Person[],
-  recipes: Recipe[],
-  pens: Map<string, number>[]
-): Sel[] {
-  const day: Sel[] = day0.map((sel) => sel.slice());
-  let bestV = dayObj(day, persons, pens);
-  for (let pass = 0; pass < 200; pass++) {
+  recs: RecipeOpt[],
+  start: PersonDay[],
+  recsA?: Set<number>,
+  iterations = 40
+): PersonDay[] {
+  const days = start.map((d) => ({ ...d, B: { ...d.B }, M: { ...d.M }, A: { ...d.A }, S: { ...d.S } }));
+  let best = totalObjective(days, persons, recs, recsA);
+  for (let it = 0; it < iterations; it++) {
     let improved = false;
-    for (let i = 0; i < 4; i++) {
-      if (SHARED[SLOT_KEYS[i]]) {
-        const pool = recipes.filter((r) => allows(r, SLOT_KEYS[i]));
-        let old0 = day[0][i];
-        let old1 = day[1][i];
-        for (const r of pool)
-          for (const s0 of SIZES)
-            for (const s1 of SIZES) {
-              if (
-                old0 &&
-                old1 &&
-                r.id === old0[0].id &&
-                s0 === old0[1] &&
-                r.id === old1[0].id &&
-                s1 === old1[1]
-              )
-                continue;
-              day[0][i] = [r, s0];
-              day[1][i] = [r, s1];
-              const v = dayObj(day, persons, pens);
-              if (v < bestV) {
-                bestV = v;
-                improved = true;
-                old0 = day[0][i];
-                old1 = day[1][i];
-              } else {
-                day[0][i] = old0;
-                day[1][i] = old1;
-              }
+    for (let pi = 0; pi < days.length; pi++) {
+      const per = persons[pi] ?? persons[0];
+      for (const slot of SLOTS) {
+        const cur = days[pi][slot];
+        const shared = persons.length === 2 && (slot === "M" || slot === "A");
+        const used = new Set<number>();
+        for (const s of SLOTS) if (s !== slot) used.add(days[pi][s].recipe.id);
+        const cands = candidates(recs, slot, per, used, 14);
+        for (const rec of cands) {
+          for (const servings of SIZES) {
+            if (rec.id === cur.recipe.id && servings === cur.servings) continue;
+            days[pi][slot] = { recipe: rec, servings };
+            if (shared) {
+              const partner = days[1 - pi];
+              partner[slot] = { recipe: rec, servings: partner[slot].servings };
             }
-      } else {
-        const pool = recipes.filter((r) => allows(r, SLOT_KEYS[i]));
-        for (let pi = 0; pi < persons.length; pi++) {
-          let old = day[pi][i];
-          for (const r of pool)
-            for (const s of SIZES) {
-              if (old && r.id === old[0].id && s === old[1]) continue;
-              day[pi][i] = [r, s];
-              const v = dayObj(day, persons, pens);
-              if (v < bestV) {
-                bestV = v;
-                improved = true;
-                old = day[pi][i];
-              } else {
-                day[pi][i] = old;
-              }
+            const obj = totalObjective(days, persons, recs, recsA);
+            if (obj < best - 1e-9) {
+              best = obj;
+              improved = true;
+              // restliche Kandidaten in dieser Runde überspringen
+              cands.length = 0;
+              break;
             }
+            days[pi][slot] = { recipe: cur.recipe, servings: cur.servings };
+            if (shared) {
+              const partner = days[1 - pi];
+              partner[slot] = { recipe: cur.recipe, servings: partner[slot].servings };
+            }
+          }
         }
       }
     }
     if (!improved) break;
   }
-  return day;
+  return days;
 }
 
-function toCells(sel: Sel): PersonPlan {
-  return sel.map((c) => (c ? { recipeId: c[0].id, servings: c[1] } : null));
-}
+export function generatePlan(persons: Person[], recipes: RecipeOpt[]): PlanResult {
+  const t0 = Date.now();
+  if (!persons.length || !recipes.length) {
+    throw new Error("Es werden mindestens ein Profil und ein Rezept benötigt.");
+  }
+  const recs = recipes.filter((r) => r.kcal > 0 && r.slots.length > 0);
+  if (!recs.length) throw new Error("Keine Rezepte mit kcal-Werten gefunden.");
 
-export function generatePlan(
-  persons: Person[],
-  recipes: Recipe[]
-): TemplateResult {
-  const build = (extra?: Map<string, number>): DayPlan[] => {
-    const days: DayPlan[] = [];
-    const used: Record<string, number> = {};
-    for (let d = 0; d < 7; d++) {
-      const pen = new Map<string, number>();
-      for (const [n, c] of Object.entries(used)) pen.set(n, 0.8 * c);
-      if (extra)
-        for (const [n, p] of extra) pen.set(n, (pen.get(n) ?? 0) + p);
-      const pens = persons.map(() => pen);
-      let day = initDay(persons, recipes, pens);
-      day = optimizeDay(day, persons, recipes, pens);
-      const cells = day.map(toCells);
-      days.push(cells);
-      const names = new Set<string>();
-      for (const sel of cells)
-        for (const c of sel) {
-          if (!c) continue;
-          const r = recipes.find((x) => x.id === c.recipeId);
-          if (r) names.add(r.name);
-        }
-      for (const n of names) used[n] = (used[n] ?? 0) + 1;
-    }
-    return days;
-  };
+  const startA = initial(persons, recs);
+  const A = optimize(persons, recs, startA);
+  const recsA = new Set<number>();
+  for (const d of A) for (const s of SLOTS) recsA.add(d[s].recipe.id);
+  const B = optimize(persons, recs, initial(persons, recs), recsA);
 
-  const A = build();
-  const countA: Record<string, number> = {};
-  for (const day of A)
-    for (const sel of day)
-      for (const c of sel) {
-        if (!c) continue;
-        const r = recipes.find((x) => x.id === c.recipeId);
-        if (r) countA[r.name] = (countA[r.name] ?? 0) + 1;
-      }
-  const extra = new Map<string, number>();
-  for (const [n, c] of Object.entries(countA)) extra.set(n, 0.6 * c);
-  return { A, B: build(extra) };
+  return { A, B, ms: Date.now() - t0 };
 }

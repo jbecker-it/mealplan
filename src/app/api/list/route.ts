@@ -4,7 +4,15 @@ import { currentWeekKey } from "@/lib/week";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 
-const CATEGORY_ORDER = ["Obst & Gemüse", "Kühlregal", "Trockenwaren", "Sonstige"];
+// Basis-Kategorien in fester Reihenfolge; weitere benutzerdefinierte
+// Kategorien (z. B. „Trockenwaren“ oder eigene) kommen alphabetisch danach.
+const BASE_ORDER = ["Obst & Gemüse", "Kühlregal", "Trockenwaren"];
+
+function orderCategories(cats: Set<string>): string[] {
+  const base = BASE_ORDER.filter((c) => cats.has(c));
+  const rest = [...cats].filter((c) => !BASE_ORDER.includes(c)).sort((a, b) => a.localeCompare(b, "de"));
+  return [...base, ...rest];
+}
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth();
@@ -83,16 +91,15 @@ export async function GET(req: NextRequest) {
   const checkedSet = new Set(checked.map((c) => c.ingredient_id));
 
   const groups: Record<string, Array<Record<string, unknown>>> = {};
+  const cats = new Set<string>();
   for (const r of flat) {
-    const cat = CATEGORY_ORDER.includes(String(r.category))
-      ? String(r.category)
-      : "Sonstige";
+    const cat = String(r.category) || "Sonstige";
+    cats.add(cat);
     (groups[cat] ||= []).push({ ...r, checked: checkedSet.has(Number(r.ingredient_id)) });
   }
-  const ordered = CATEGORY_ORDER.filter((c) => groups[c]).map((c) => ({
-    category: c,
-    items: groups[c],
-  }));
+  const ordered = orderCategories(cats)
+    .filter((c) => groups[c])
+    .map((c) => ({ category: c, items: groups[c] }));
 
   return NextResponse.json({
     week,

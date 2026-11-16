@@ -19,6 +19,7 @@ const LINKS = [
   ["/list", "Einkaufsliste"],
   ["/recipes", "Rezepte"],
   ["/ingredients", "Zutaten"],
+  ["/vorlagen", "Vorlagen"],
   ["/import", "Import"],
   ["/profiles", "Profile"],
   ["/settings", "Einstellungen"],

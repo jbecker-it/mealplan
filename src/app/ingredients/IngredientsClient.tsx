@@ -11,7 +11,7 @@ interface Ing {
   aliases: string[];
 }
 
-const CATEGORIES = ["Obst & Gemüse", "Kühlregal", "Trockenwaren", "Sonstiges"];
+const BASE_CATEGORIES = ["Obst & Gemüse", "Kühlregal", "Trockenwaren", "Sonstige"];
 const UNITS = ["g", "ml", "Stk", "EL", "TL", "Portion"];
 
 export default function IngredientsClient() {
@@ -21,13 +21,13 @@ export default function IngredientsClient() {
 
   // Neuanlage
   const [nName, setNName] = useState("");
-  const [nCat, setNCat] = useState(CATEGORIES[2]);
+  const [nCat, setNCat] = useState("Trockenwaren");
   const [nUnit, setNUnit] = useState("g");
 
   // Bearbeiten / Alias pro Zeile
   const [editId, setEditId] = useState<number | null>(null);
   const [eName, setEName] = useState("");
-  const [eCat, setECat] = useState(CATEGORIES[2]);
+  const [eCat, setECat] = useState("Trockenwaren");
   const [eUnit, setEUnit] = useState("g");
   const [aliasFor, setAliasFor] = useState<number | null>(null);
   const [aliasText, setAliasText] = useState("");
@@ -55,20 +55,29 @@ export default function IngredientsClient() {
     );
   }, [ings, q]);
 
+  // Kategorien: Basis-Kategorien + alle bereits vorhandenen (frei anlegbar)
+  const catOptions = useMemo(() => {
+    const set = new Set<string>(BASE_CATEGORIES);
+    for (const i of ings) if (i.category) set.add(i.category);
+    const base = BASE_CATEGORIES.filter((c) => set.has(c));
+    const rest = [...set].filter((c) => !BASE_CATEGORIES.includes(c)).sort((a, b) => a.localeCompare(b, "de"));
+    return [...base, ...rest];
+  }, [ings]);
+
   const grouped = useMemo(() => {
-    const order = CATEGORIES;
     const map = new Map<string, Ing[]>();
     for (const i of filtered) {
-      const key = i.category || "Sonstiges";
+      const key = i.category || "Sonstige";
       const list = map.get(key) ?? [];
       list.push(i);
       map.set(key, list);
     }
     const keys = [...map.keys()].sort(
-      (a, b) => order.indexOf(a) - order.indexOf(b) || a.localeCompare(b)
+      (a, b) =>
+        catOptions.indexOf(a) - catOptions.indexOf(b) || a.localeCompare(b, "de")
     );
     return keys.map((k) => [k, map.get(k)!] as const);
-  }, [filtered]);
+  }, [filtered, catOptions]);
 
   async function addIng() {
     if (!nName.trim()) return;
@@ -88,7 +97,7 @@ export default function IngredientsClient() {
   function startEdit(i: Ing) {
     setEditId(i.id);
     setEName(i.name);
-    setECat(i.category || "Sonstiges");
+    setECat(i.category || "Sonstige");
     setEUnit(i.unit_default || "g");
     setAliasFor(null);
   }
@@ -192,11 +201,18 @@ export default function IngredientsClient() {
             placeholder="z. B. Kokosmilch"
             className="min-w-40 flex-1 rounded-lg border border-line bg-card px-3 py-1.5 text-sm outline-none focus:border-accent"
           />
-          <select value={nCat} onChange={(e) => setNCat(e.target.value)} className={selCls}>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
+          <input
+            value={nCat}
+            onChange={(e) => setNCat(e.target.value)}
+            list="cat-datalist"
+            placeholder="Kategorie (frei wählen, z. B. Trockenwaren)"
+            className={selCls + " min-w-44"}
+          />
+          <datalist id="cat-datalist">
+            {catOptions.map((c) => (
+              <option key={c} value={c} />
             ))}
-          </select>
+          </datalist>
           <select value={nUnit} onChange={(e) => setNUnit(e.target.value)} className={selCls}>
             {UNITS.map((u) => (
               <option key={u} value={u}>{u}</option>
@@ -226,11 +242,18 @@ export default function IngredientsClient() {
                     onKeyDown={(e) => e.key === "Enter" && saveEdit()}
                     className="min-w-32 flex-1 rounded-lg border border-line bg-card px-3 py-1.5 text-sm outline-none focus:border-accent"
                   />
-                  <select value={eCat} onChange={(e) => setECat(e.target.value)} className={selCls}>
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                  <input
+                    value={eCat}
+                    onChange={(e) => setECat(e.target.value)}
+                    list="cat-datalist-edit"
+                    placeholder="Kategorie"
+                    className={selCls + " min-w-40"}
+                  />
+                  <datalist id="cat-datalist-edit">
+                    {catOptions.map((c) => (
+                      <option key={c} value={c} />
                     ))}
-                  </select>
+                  </datalist>
                   <select value={eUnit} onChange={(e) => setEUnit(e.target.value)} className={selCls}>
                     {UNITS.map((u) => (
                       <option key={u} value={u}>{u}</option>

@@ -52,9 +52,13 @@ export async function POST(req: NextRequest) {
       DELETE FROM tag;
       DELETE FROM alias;
       DELETE FROM ingredient;
+      DELETE FROM template;
     `);
   })();
 
+  const templates = (
+    db.prepare("SELECT COUNT(*) AS c FROM template").get() as { c: number }
+  ).c;
   const recipes = (
     db.prepare("SELECT COUNT(*) AS c FROM recipe").get() as { c: number }
   ).c;
@@ -71,6 +75,7 @@ export async function POST(req: NextRequest) {
     recipes,
     ingredients,
     profiles,
-    note: "Alles blank: alle Rezepte, Zutaten, Aliase, Tags, Pläne und Listen-Auswahl gelöscht (Profile mit deinen Makro-Zielen und Passwort bleiben erhalten). Der vorherige Stand wurde automatisch gesichert.",
+    templates,
+    note: "Alles blank: alle Rezepte, Zutaten, Aliase, Tags, Pläne, Vorlagen und Listen-Auswahl gelöscht (Profile mit deinen Makro-Zielen und Passwort bleiben erhalten). Der vorherige Stand wurde automatisch gesichert.",
   });
 }

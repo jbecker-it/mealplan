@@ -101,6 +101,13 @@ CREATE TABLE IF NOT EXISTS plan_meal (
 );
 CREATE INDEX IF NOT EXISTS idx_plan_week ON plan_meal(week_key, day, profile_id);
 
+CREATE TABLE IF NOT EXISTS template (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  slots_json TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS check_state (
   week_key TEXT NOT NULL,
   ingredient_id INTEGER NOT NULL REFERENCES ingredient(id),
@@ -145,6 +152,20 @@ function createDb(): DbInstance {
   addCol("ALTER TABLE profile ADD COLUMN salt_target REAL NOT NULL DEFAULT 0");
   addCol("ALTER TABLE plan_meal ADD COLUMN sugar REAL DEFAULT 0");
   addCol("ALTER TABLE plan_meal ADD COLUMN salt REAL DEFAULT 0");
+  // Unique-Index für Upserts (ON CONFLICT) — evtl. Duplikate erst auflösen.
+  try {
+    d.exec(`
+      DELETE FROM plan_meal WHERE id NOT IN (
+        SELECT MAX(id) FROM plan_meal
+        GROUP BY week_key, template_id, day, profile_id, slot
+      )`);
+    d.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_slot ON
+       plan_meal(week_key, template_id, day, profile_id, slot)`
+    );
+  } catch {
+    // Index konnte nicht angelegt werden — Upserts fallen auf Delete-then-Insert zurück
+  }
   ensureSeed(d);
   return d;
 }
