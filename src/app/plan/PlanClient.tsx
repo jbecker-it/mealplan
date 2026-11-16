@@ -73,18 +73,21 @@ function fmt(n: number, d = 0) {
   return n.toLocaleString("de-DE", { maximumFractionDigits: d });
 }
 
-// Fortschrittsbalken: Balken = Verbrauch, weiße Markierung = Tagesziel,
-// roter Anteil = Überzieher. Rechts: Wert/Ziel + wie viel frei oder über.
+// Fortschrittsbalken: Balken = Verbrauch relativ zum Tagesziel (voll = Ziel erreicht).
+// Überschritten → Balken VOLL + rot (Text ebenfalls). soft (Protein): Überzug ist
+// nicht schlimm → bleibt grün. Ziel 0 → neutrale Zeile, keine Warnung.
 function MacroBar({
   label,
   val,
   target,
   unit,
+  soft = false,
 }: {
   label: string;
   val: number;
   target: number;
   unit: string;
+  soft?: boolean;
 }) {
   if (!target) {
     return (
@@ -93,41 +96,34 @@ function MacroBar({
           {label}
         </span>
         <div className="h-2.5 flex-1 rounded bg-slate-800/60" />
-        <span className="w-24 shrink-0 text-right text-xs tabular-nums text-slate-400">
+        <span className="w-40 shrink-0 text-right text-xs tabular-nums text-slate-400">
           {fmt(val, 1)} {unit} · kein Ziel
         </span>
       </div>
     );
   }
-  const scale = Math.max(target, val);
-  const okPct = (Math.min(val, target) / scale) * 100;
-  const overPct = (Math.max(0, val - target) / scale) * 100;
-  const targetPct = (target / scale) * 100;
   const over = val > target + 0.001;
+  const red = over && !soft;
+  const width = Math.min(100, (val / target) * 100);
   const delta = Math.abs(val - target);
   return (
     <div className="flex items-center gap-2">
       <span className="w-16 shrink-0 text-[11px] uppercase tracking-wide text-slate-500">
         {label}
       </span>
-      <div className="relative h-2.5 flex-1 overflow-hidden rounded bg-slate-800">
-        <div className="h-full bg-emerald-500/90" style={{ width: `${okPct}%` }} />
-        {overPct > 0 && (
-          <div className="h-full bg-rose-500" style={{ width: `${overPct}%` }} />
-        )}
+      <div className="h-2.5 flex-1 overflow-hidden rounded bg-slate-800">
         <div
-          className="absolute top-0 h-full w-0.5 bg-white/80"
-          style={{ left: `calc(${targetPct}% - 1px)` }}
-          title={`Ziel: ${fmt(target, 1)} ${unit}`}
+          className={`h-full ${red ? "bg-rose-500" : "bg-emerald-500/90"}`}
+          style={{ width: `${width}%` }}
         />
       </div>
       <span
-        className={`w-32 shrink-0 text-right text-xs tabular-nums ${
-          over ? "font-semibold text-rose-400" : "text-slate-300"
+        className={`w-40 shrink-0 text-right text-xs tabular-nums ${
+          red ? "font-semibold text-rose-400" : "text-slate-300"
         }`}
       >
         {fmt(val, 1)} / {fmt(target, 1)} {unit}{" "}
-        <span className={over ? "text-rose-400" : "text-slate-500"}>
+        <span className={red ? "text-rose-400" : "text-slate-500"}>
           {over ? `(+${fmt(delta, 1)})` : `(${fmt(delta, 1)} frei)`}
         </span>
       </span>
@@ -361,18 +357,21 @@ export default function PlanClient() {
               <div key={p.id} className="overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
                 <div className="border-b border-white/10 bg-slate-800/60 px-4 py-2.5">
                   <h3 className="font-semibold">{p.name}</h3>
-                  <div className="text-[11px] text-slate-500">
+                  <div
+                    className="whitespace-nowrap text-[11px] text-slate-500"
+                    title="Tagesziele: kcal, Protein, Kohlenhydrate, Fett, Zucker, Salz"
+                  >
                     Tagesziel: {p.kcal_target} kcal · {p.p_target} P · {p.c_target} C ·{" "}
-                    {p.f_target} F
-                    {p.sugar_target > 0 && ` · Zucker ${p.sugar_target} g`}
-                    {p.salt_target > 0 && ` · Salz ${p.salt_target} g`}
+                    {p.f_target} F · Z{" "}
+                    {p.sugar_target > 0 ? p.sugar_target + " g" : "–"} · S{" "}
+                    {p.salt_target > 0 ? p.salt_target + " g" : "–"}
                   </div>
                 </div>
 
                 {/* Fortschrittsbalken je Makro */}
                 <div className="space-y-1.5 border-b border-white/10 px-4 py-3">
                   <MacroBar label="kcal" val={tot?.kcal || 0} target={p.kcal_target} unit="" />
-                  <MacroBar label="Protein" val={tot?.p || 0} target={p.p_target} unit="g" />
+                  <MacroBar label="Protein" val={tot?.p || 0} target={p.p_target} unit="g" soft />
                   <MacroBar label="KH" val={tot?.c || 0} target={p.c_target} unit="g" />
                   <MacroBar label="Fett" val={tot?.f || 0} target={p.f_target} unit="g" />
                   <MacroBar label="Zucker" val={tot?.sugar || 0} target={p.sugar_target} unit="g" />
