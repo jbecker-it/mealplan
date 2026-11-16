@@ -4,7 +4,39 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { db } from "./db";
 
-const sessions = new Map<string, number>(); // token -> expiry
+// Sessions liegen in der DB (Nicht in-memory): Das Root-Layout läuft in
+// einem separaten Modul-Kontext von den API-Routen — in-memory-State
+// (Map) ist dort nie sichtbar. DB-Datei wird dagegen von beiden geteilt.
+const SESSION_TTL = 30 * 86400 * 1000; // 30 Tage
+
+const insSession = db.prepare(
+  "INSERT INTO session (token, expiry) VALUES (?, ?)"
+);
+const selSession = db.prepare(
+  "SELECT expiry FROM session WHERE token = ?"
+);
+const delSession = db.prepare("DELETE FROM session WHERE token = ?");
+
+export function issueSession(): string {
+  const token = crypto.randomBytes(24).toString("hex");
+  insSession.run(token, Date.now() + SESSION_TTL);
+  return token;
+}
+
+export function isAuthed(token?: string | null): boolean {
+  if (!token) return false;
+  const row = selSession.get(token) as { expiry: number } | undefined;
+  if (!row) return false;
+  if (row.expiry < Date.now()) {
+    delSession.run(token);
+    return false;
+  }
+  return true;
+}
+
+export function deleteSession(token: string | null | undefined): void {
+  if (token) delSession.run(token);
+}
 
 export function isSetup(): boolean {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'auth'").get() as
@@ -34,23 +66,6 @@ export function checkPassword(password: string): boolean {
   const { salt, hash } = JSON.parse(row.value) as { salt: string; hash: string };
   const got = scrypt(password, salt);
   return got.length === hash.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(hash));
-}
-
-export function issueSession(): string {
-  const token = crypto.randomBytes(24).toString("hex");
-  sessions.set(token, Date.now() + 30 * 86400 * 1000);
-  return token;
-}
-
-export function isAuthed(token?: string | null): boolean {
-  if (!token) return false;
-  const exp = sessions.get(token);
-  if (!exp) return false;
-  if (exp < Date.now()) {
-    sessions.delete(token);
-    return false;
-  }
-  return true;
 }
 
 export async function requireAuth(): Promise<NextResponse | null> {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { isAuthed, isSetup } from "@/lib/auth";
 import AuthRedirect from "./AuthRedirect";
+import LogoutButton from "./LogoutButton";
 import "./globals.css";
 
 const geist = Geist({ subsets: ["latin"] });
@@ -21,20 +22,6 @@ const LINKS = [
   ["/profiles", "Profile"],
 ] as const;
 
-function LogoutButton() {
-  return (
-    <button
-      onClick={async () => {
-        await fetch("/api/auth", { method: "DELETE" });
-        window.location.href = "/login";
-      }}
-      className="rounded-lg px-3 py-1.5 text-sm text-muted transition hover:bg-card hover:text-foreground"
-    >
-      Logout
-    </button>
-  );
-}
-
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -46,8 +33,8 @@ export default async function RootLayout({
       <body className={`${geist.className} min-h-screen bg-background text-foreground`}>
         {authed && (
           <nav className="sticky top-0 z-40 border-b border-line bg-background/95 backdrop-blur">
-            <div className="mx-auto flex max-w-6xl items-center gap-1 px-4 py-3">
-              <span className="mr-4 font-bold text-accent">Mealplan</span>
+            <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-1 px-4 py-2">
+              <span className="mr-2 font-bold text-accent">Mealplan</span>
               {LINKS.map(([href, label]) => (
                 <Link
                   key={href}

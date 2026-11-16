@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS session (
+  token TEXT PRIMARY KEY,
+  expiry INTEGER NOT NULL
+);
 `);
 
 // Migration: erlaubte Slots pro Rezept (B=Frühstück, M=Mittag, A=Abend, S=Snack)

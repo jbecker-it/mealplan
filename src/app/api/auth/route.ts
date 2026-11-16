@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import {
   checkPassword,
+  deleteSession,
   isAuthed,
   isSetup,
   issueSession,
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE() {
   const store = await cookies();
+  deleteSession(store.get("mp")?.value);
   store.delete("mp");
   return NextResponse.json({ ok: true });
 }
