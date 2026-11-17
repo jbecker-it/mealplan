@@ -411,8 +411,8 @@ export default function PlanClient() {
                                 </button>
                               ))}
                             </div>
-                            <span className="w-14 shrink-0 text-right text-xs tabular-nums text-slate-500">
-                              {fmt(r.kcal)} kcal
+                            <span className="w-24 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-slate-400">
+                              {fmt(r.kcal, 1)} kcal
                             </span>
                           </>
                         ) : (
