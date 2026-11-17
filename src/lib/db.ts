@@ -221,6 +221,28 @@ function createDb(): DbInstance {
   } catch {
     // Migration überspringbar — neue Daten werden korrekt geschrieben
   }
+  // Migration: Zutaten-Kategorien auf die REWE-Markt-Abteilungen umstellen
+  // (2026-11-17, Commit 4ebaa6d+). Nur Zutaten, die noch die alten
+  // Kategorien „Trockenwaren“/„Kühlregal“ tragen, werden umgelabelt —
+  // manuell gesetzte Kategorien bleiben unverändert. Idempotent.
+  try {
+    const REWE_CAT: Array<[string, string[]]> = [
+      ["Fleisch, Wurst & Fisch", ["Tofu", "Tempeh"]],
+      ["Käse, Eier & Molkerei", ["Haferdrink", "Sojadrink", "Magerquark", "Sojajoghurt", "Haferproteinpulver"]],
+      ["Tiefkühl", ["Edamame"]],
+      ["Backwaren, Cerealien & Aufstriche", ["Vollkornbrot", "Haferflocken", "Cornflakes", "Ahornsirup"]],
+      ["Kochen & Backen", ["Nudeln", "Fusilli", "Reis", "Kichererbsen", "Rote Linsen", "Kokosraspeln"]],
+      ["Öle, Soßen & Gewürze", ["Rapsöl", "Kokosöl", "Kürbiskernöl", "Sojasoße", "Currypaste", "Tahini", "Sesam", "Hefeflocken"]],
+      ["Fertiggerichte & Konserven", ["Falafel", "Kokosmilch"]],
+      ["Süßes & Salziges", ["Chiasamen"]],
+    ];
+    const up = d.prepare(
+      "UPDATE ingredient SET category = ? WHERE name = ? AND category IN ('Trockenwaren', 'Kühlregal')"
+    );
+    for (const [cat, names] of REWE_CAT) for (const name of names) up.run(cat, name);
+  } catch {
+    // Migration überspringbar — Kategorien sind freie Labels
+  }
   ensureSeed(d);
   return d;
 }

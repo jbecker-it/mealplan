@@ -11,7 +11,7 @@ interface Ing {
   aliases: string[];
 }
 
-const BASE_CATEGORIES = ["Obst & Gemüse", "Kühlregal", "Trockenwaren", "Sonstige"];
+const BASE_CATEGORIES = ["Obst & Gemüse", "Fleisch, Wurst & Fisch", "Käse, Eier & Molkerei", "Tiefkühl", "Backwaren, Cerealien & Aufstriche", "Kochen & Backen", "Öle, Soßen & Gewürze", "Fertiggerichte & Konserven", "Süßes & Salziges", "Kaffee, Tee & Kakao", "Getränke & Genussmittel", "Sonstige"];
 const UNITS = ["g", "ml", "Stk", "EL", "TL", "Portion"];
 
 export default function IngredientsClient() {
@@ -21,13 +21,13 @@ export default function IngredientsClient() {
 
   // Neuanlage
   const [nName, setNName] = useState("");
-  const [nCat, setNCat] = useState("Trockenwaren");
+  const [nCat, setNCat] = useState("Kochen & Backen");
   const [nUnit, setNUnit] = useState("g");
 
   // Bearbeiten / Alias pro Zeile
   const [editId, setEditId] = useState<number | null>(null);
   const [eName, setEName] = useState("");
-  const [eCat, setECat] = useState("Trockenwaren");
+  const [eCat, setECat] = useState("Kochen & Backen");
   const [eUnit, setEUnit] = useState("g");
   const [aliasFor, setAliasFor] = useState<number | null>(null);
   const [aliasText, setAliasText] = useState("");
@@ -205,7 +205,7 @@ export default function IngredientsClient() {
             value={nCat}
             onChange={(e) => setNCat(e.target.value)}
             list="cat-datalist"
-            placeholder="Kategorie (frei wählen, z. B. Trockenwaren)"
+            placeholder="Kategorie (frei wählen, z. B. Kochen & Backen)"
             className={selCls + " min-w-44"}
           />
           <datalist id="cat-datalist">

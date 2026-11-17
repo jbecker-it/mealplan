@@ -7,7 +7,7 @@ import { grammageToGrams, reweUrl } from "@/lib/rewe";
 
 // Basis-Kategorien in fester Reihenfolge; weitere benutzerdefinierte
 // Kategorien (z. B. „Trockenwaren“ oder eigene) kommen alphabetisch danach.
-const BASE_ORDER = ["Obst & Gemüse", "Kühlregal", "Trockenwaren"];
+const BASE_ORDER = ["Obst & Gemüse", "Fleisch, Wurst & Fisch", "Käse, Eier & Molkerei", "Tiefkühl", "Backwaren, Cerealien & Aufstriche", "Kochen & Backen", "Öle, Soßen & Gewürze", "Fertiggerichte & Konserven", "Süßes & Salziges", "Kaffee, Tee & Kakao", "Getränke & Genussmittel"];
 
 function orderCategories(cats: Set<string>): string[] {
   const base = BASE_ORDER.filter((c) => cats.has(c));
