@@ -8,7 +8,7 @@ export async function GET() {
   if (denied) return denied;
   const rows = db
     .prepare(
-      `SELECT i.id, i.name, i.category, i.unit_default,
+      `SELECT i.id, i.name, i.category, i.unit_default, i.rewe_product_id,
               (SELECT COUNT(*) FROM recipe_ingredient ri WHERE ri.ingredient_id = i.id) AS recipe_count
        FROM ingredient i ORDER BY i.category, i.name COLLATE NOCASE`
     )

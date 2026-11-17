@@ -125,6 +125,32 @@ CREATE TABLE IF NOT EXISTS session (
   token TEXT PRIMARY KEY,
   expiry INTEGER NOT NULL
 );
+
+-- REWE-Integration: aktiver Markt + Produkt-Cache (Live-Daten via rewerse-Brücke)
+CREATE TABLE IF NOT EXISTS rewe_market (
+  ww_ident TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  city TEXT,
+  plz TEXT,
+  street TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS rewe_product (
+  product_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  brand TEXT,
+  article_id TEXT,
+  image_url TEXT,
+  grammage TEXT,
+  price_cents INTEGER,
+  discount_json TEXT,
+  is_vegan INTEGER DEFAULT 0,
+  is_organic INTEGER DEFAULT 0,
+  description TEXT,
+  nutrition_json TEXT,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
 `;
 
 function createDb(): DbInstance {

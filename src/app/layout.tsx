@@ -17,6 +17,7 @@ export const metadata: Metadata = {
 const LINKS = [
   ["/plan", "Plan"],
   ["/list", "Einkaufsliste"],
+  ["/rewe", "REWE"],
   ["/recipes", "Rezepte"],
   ["/ingredients", "Zutaten"],
   ["/vorlagen", "Vorlagen"],

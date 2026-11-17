@@ -1,7 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
+interface Rewe {
+  productId: string;
+  title: string;
+  image: string | null;
+  priceCents: number | null;
+  vegan: boolean;
+  grammage: string | null;
+  brand: string | null;
+  url: string;
+  packs: number | null;
+  costCents: number | null;
+}
 interface Item {
   id: number;
   name: string;
@@ -10,6 +23,7 @@ interface Item {
   qty: number;
   used_in: string;
   checked: boolean;
+  rewe: Rewe | null;
 }
 interface Group {
   category: string;
@@ -20,7 +34,11 @@ interface ListData {
   groups: Group[];
   total: number;
   checkedCount: number;
+  rewe: { totalCents: number; mappedCount: number; unmappedCount: number };
 }
+
+const euro = (cents: number) =>
+  (cents / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 
 export default function ListClient() {
   const [data, setData] = useState<ListData | null>(null);
@@ -52,6 +70,19 @@ export default function ListClient() {
         <span className="rounded-lg bg-card px-2.5 py-1 text-sm text-muted">
           {data.checkedCount}/{data.total} abgehakt
         </span>
+        {data.rewe.totalCents > 0 && (
+          <span className="rounded-lg bg-card px-2.5 py-1 text-sm font-semibold text-accent">
+            REWE {euro(data.rewe.totalCents)}
+          </span>
+        )}
+        {data.rewe.unmappedCount > 0 && (
+          <Link
+            href="/rewe"
+            className="rounded-lg border border-line px-2.5 py-1 text-sm text-muted transition hover:text-foreground"
+          >
+            {data.rewe.unmappedCount} ohne REWE-Zuordnung →
+          </Link>
+        )}
         <span className="flex-1" />
         {(data.groups.length > 0 || data.checkedCount > 0) && (
           <button onClick={load} className="rounded-lg bg-card px-3 py-1.5 text-sm text-muted hover:text-foreground">
@@ -73,20 +104,57 @@ export default function ListClient() {
           </div>
           <ul className="divide-y divide-line">
             {g.items.map((it) => (
-              <li key={it.id} className="flex items-center gap-3 px-4 py-2.5">
+              <li key={it.id} className="flex items-center gap-3 px-4 py-2">
                 <input
                   type="checkbox"
                   checked={it.checked}
                   onChange={() => toggle(it)}
                   className="h-4 w-4 accent-[var(--accent)]"
                 />
-                <span className={`flex-1 text-sm ${it.checked ? "text-muted line-through" : ""}`}>
-                  {it.name}
+                {it.rewe?.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={it.rewe.image}
+                    alt={it.rewe.title}
+                    className="h-9 w-9 rounded-md border border-line object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                ) : (
+                  <span className="h-9 w-9 shrink-0 rounded-md border border-dashed border-line" />
+                )}
+                <span className={`min-w-0 flex-1 text-sm ${it.checked ? "text-muted line-through" : ""}`}>
+                  <span className="block truncate">{it.name}</span>
+                  {it.rewe && (
+                    <a
+                      href={it.rewe.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate text-xs text-muted/70 hover:text-accent"
+                    >
+                      {it.rewe.brand ? `${it.rewe.brand} · ` : ""}
+                      {it.rewe.title}
+                      {it.rewe.vegan && " 🌱"}
+                    </a>
+                  )}
                 </span>
-                <span className="text-sm text-muted">
+                <span className="shrink-0 text-sm text-muted">
                   {Number(it.qty).toLocaleString("de-DE")} {it.unit || ""}
                 </span>
-                <span className="hidden max-w-40 truncate text-xs text-muted/60 md:inline" title={it.used_in}>
+                {it.rewe?.priceCents != null && (
+                  <span className="shrink-0 text-right text-sm font-medium tabular-nums">
+                    {it.rewe.packs != null && (
+                      <span className="text-xs text-muted">
+                        {it.rewe.packs}× {euro(it.rewe.priceCents)}
+                      </span>
+                    )}
+                    {it.rewe.costCents != null && (
+                      <span className="ml-1">{euro(it.rewe.costCents)}</span>
+                    )}
+                  </span>
+                )}
+                <span className="hidden max-w-40 truncate text-xs text-muted/60 lg:inline" title={it.used_in}>
                   {it.used_in}
                 </span>
               </li>

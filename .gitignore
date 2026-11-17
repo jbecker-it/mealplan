@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+!rewe/certificate.pem
+rewe/private.key
 
 # debug
 npm-debug.log*
