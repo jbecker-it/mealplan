@@ -75,19 +75,22 @@ function fmt(n: number, d = 0) {
 
 // Fortschrittsbalken: Balken = Verbrauch relativ zum Tagesziel (voll = Ziel erreicht).
 // Überschritten → Balken VOLL + rot (Text ebenfalls). soft (Protein): Überzug ist
-// nicht schlimm → bleibt grün. Ziel 0 → neutrale Zeile, keine Warnung.
+// nicht schlimm → bleibt grün. band (kcal): Überzug bis +band ist erlaubt (grün).
+// Ziel 0 → neutrale Zeile, keine Warnung.
 function MacroBar({
   label,
   val,
   target,
   unit,
   soft = false,
+  band = 0,
 }: {
   label: string;
   val: number;
   target: number;
   unit: string;
   soft?: boolean;
+  band?: number;
 }) {
   if (!target) {
     return (
@@ -102,7 +105,7 @@ function MacroBar({
       </div>
     );
   }
-  const over = val > target + 0.001;
+  const over = val > target + band + 0.001;
   const red = over && !soft;
   const width = Math.min(100, (val / target) * 100);
   const delta = Math.abs(val - target);
@@ -370,7 +373,7 @@ export default function PlanClient() {
 
                 {/* Fortschrittsbalken je Makro */}
                 <div className="space-y-1.5 border-b border-white/10 px-4 py-3">
-                  <MacroBar label="kcal" val={tot?.kcal || 0} target={p.kcal_target} unit="" />
+                  <MacroBar label="kcal" val={tot?.kcal || 0} target={p.kcal_target} unit="" band={50} />
                   <MacroBar label="Protein" val={tot?.p || 0} target={p.p_target} unit="g" soft />
                   <MacroBar label="KH" val={tot?.c || 0} target={p.c_target} unit="g" />
                   <MacroBar label="Fett" val={tot?.f || 0} target={p.f_target} unit="g" />

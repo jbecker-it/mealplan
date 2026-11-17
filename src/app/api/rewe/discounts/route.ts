@@ -51,9 +51,10 @@ export async function GET() {
       offers: Offer[];
     };
     db.prepare(
-      `INSERT INTO settings(key, value) VALUES(?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-    ).run(cacheKey, JSON.stringify({ count: res.count, offers: res.offers }));
+      `INSERT INTO settings(key, value, created_at) VALUES(?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+       created_at = excluded.created_at`
+    ).run(cacheKey, JSON.stringify({ count: res.count, offers: res.offers }), Date.now());
     return NextResponse.json({
       market: market.wwIdent,
       cached: false,

@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS check_state (
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
-  value TEXT
+  value TEXT,
+  created_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS session (
@@ -179,6 +180,13 @@ function createDb(): DbInstance {
   addCol("ALTER TABLE profile ADD COLUMN salt_target REAL NOT NULL DEFAULT 0");
   addCol("ALTER TABLE plan_meal ADD COLUMN sugar REAL DEFAULT 0");
   addCol("ALTER TABLE plan_meal ADD COLUMN salt REAL DEFAULT 0");
+  // Migration: settings.created_at (Cache-TTL, z. B. REWE-Discounts 24 h)
+  addCol("ALTER TABLE settings ADD COLUMN created_at INTEGER");
+  try {
+    d.prepare("UPDATE settings SET created_at = ? WHERE created_at IS NULL").run(Date.now());
+  } catch {
+    // Backfill überspringbar
+  }
   // Unique-Index für Upserts (ON CONFLICT) — evtl. Duplikate erst auflösen.
   try {
     d.exec(`
@@ -229,7 +237,7 @@ function createDb(): DbInstance {
     const REWE_CAT: Array<[string, string[]]> = [
       ["Fleisch, Wurst & Fisch", ["Tofu", "Tempeh"]],
       ["Käse, Eier & Molkerei", ["Haferdrink", "Sojadrink", "Magerquark", "Sojajoghurt", "Haferproteinpulver"]],
-      ["Tiefkühl", ["Edamame"]],
+      ["Tiefkühlkost", ["Edamame"]],
       ["Backwaren, Cerealien & Aufstriche", ["Vollkornbrot", "Haferflocken", "Cornflakes", "Ahornsirup"]],
       ["Kochen & Backen", ["Nudeln", "Fusilli", "Reis", "Kichererbsen", "Rote Linsen", "Kokosraspeln"]],
       ["Öle, Soßen & Gewürze", ["Rapsöl", "Kokosöl", "Kürbiskernöl", "Sojasoße", "Currypaste", "Tahini", "Sesam", "Hefeflocken"]],
@@ -240,6 +248,9 @@ function createDb(): DbInstance {
       "UPDATE ingredient SET category = ? WHERE name = ? AND category IN ('Trockenwaren', 'Kühlregal')"
     );
     for (const [cat, names] of REWE_CAT) for (const name of names) up.run(cat, name);
+    // Rename (2026-11-17): „Tiefkühl" → „Tiefkühlkost" (Abteilungsname im
+    // REWE-Markt 35418 Buseck)
+    d.prepare("UPDATE ingredient SET category = 'Tiefkühlkost' WHERE category = 'Tiefkühl'").run();
   } catch {
     // Migration überspringbar — Kategorien sind freie Labels
   }

@@ -5,12 +5,12 @@
 // Template A und B werden unabhängig generiert; B wird bestraft, Rezepte
 // zu verwenden, die A schon nutzt (Abwechslung zwischen den Wochentypen).
 //
-// Constraint-Hierarchie (Vorgabe Johannes, 2026-11-16):
-//  1. HARD: Kohlenhydrate und Fett dürfen die Tagesziele NICHT überschreiten
-//     (hohe Strafe → der Optimizer meidet Überschreitung fast immer).
-//  2. Protein: so nah wie möglich am Tagesmaximum (Defizit hart bestraft,
-//     Überschuss nur leicht).
-//  3. kcal: möglichst nah am Ziel (weich).
+// Constraint-Hierarchie (Vorgabe Johannes, 2026-11-17):
+//  1. Protein: möglichst mindestens voll — Defizit hart bestraft,
+//     Überschuss erlaubt (nur leicht bestraft).
+//  2. Kalorien: möglichst nah voll (Defizit bestraft), dürfen aber nicht
+//     mehr als +50 kcal über dem Ziel liegen.
+//  3. Kohlenhydrate und Fett: Überschreitung vermeiden (hart gewichtet).
 //  4. SOFT: Zucker und Salz best-effort unter dem Tagesziel (nur Überschuss
 //     bestraft; Ziel 0 = unbeachtlich).
 //
@@ -30,8 +30,8 @@ export interface RecipeOpt {
 
 export interface Person {
   id: number;
-  K: number; // kcal-Ziel
-  P: number; // Protein-Ziel
+  K: number; // kcal-Ziel (nah voll, Band +50 kcal)
+  P: number; // Protein-Ziel (möglichst mindestens voll, Überschuss ok)
   C: number; // Kohlenhydrat-Ziel (hart)
   F: number; // Fett-Ziel (hart)
   SuT?: number; // Zucker-Ziel (best-effort, 0 = unbeachtlich)
@@ -68,10 +68,11 @@ const SLOT_KCAL: Record<Slot, number> = { B: 0.22, M: 0.35, A: 0.32, S: 0.11 };
 const SLOT_P: Record<Slot, number> = { B: 0.14, M: 0.33, A: 0.33, S: 0.2 };
 
 // ---- Gewichte der Objective-Funktion (siehe Header-Hierarchie) ----
-const HARD = 5.0; // C/F-Überschreitung (harte Tagesobergrenze)
-const P_SHORT = 1.2; // Protein unter Ziel (so nah wie möglich am Maximum)
-const P_OVER = 0.3; // Protein über Ziel (leicht)
-const K_CAL = 0.8; // kcal-Abweichung (weich)
+const HARD = 5.0; // C/F-Überschreitung / kcal-Überschreitung über der Band
+const K_BAND = 50; // kcal-Toleranzband: +50 kcal dürfen drüber
+const P_SHORT = 4.0; // Protein unter Ziel ("müssen mindestens voll")
+const K_SHORT = 3.0; // kcal unter Ziel ("möglichst nah voll")
+const P_OVER = 0.3; // Protein über Ziel (erlaubt, leicht)
 const SOFT = 0.4; // Zucker/Salz-Überschuss (best-effort)
 const SLOT_FIT = 0.15; // Slot-Anteile (kcal + Protein)
 const DUP = 1.0; // gleiche Rezepte innerhalb einer Person
@@ -104,10 +105,15 @@ function safeDiv(x: number, d: number): number {
 export function personObjective(t: MacroTotals, per: PersonTargets): number {
   if (t.K === 0) return 1e9;
   let obj = 0;
+  // kcal: Defizit bestrafen (nah voll), Überschuss erst über dem 50-kcal-Band
+  obj += K_SHORT * safeDiv(Math.max(0, per.K - t.K), per.K);
+  obj += HARD * safeDiv(Math.max(0, t.K - per.K - K_BAND), per.K);
+  // Kohlenhydrate + Fett: Überschreitung vermeiden
   obj += HARD * safeDiv(Math.max(0, t.C - per.C), per.C);
   obj += HARD * safeDiv(Math.max(0, t.F - per.F), per.F);
-  obj += (t.P >= per.P ? P_OVER : P_SHORT) * safeDiv(Math.abs(t.P - per.P), per.P);
-  obj += K_CAL * safeDiv(Math.abs(t.K - per.K), per.K);
+  // Protein: Defizit hart, Überschuss erlaubt
+  obj += P_SHORT * safeDiv(Math.max(0, per.P - t.P), per.P);
+  obj += P_OVER * safeDiv(Math.max(0, t.P - per.P), per.P);
   obj += per.SuT ? SOFT * safeDiv(Math.max(0, t.Su - per.SuT), per.SuT) : 0;
   obj += per.SaT ? SOFT * safeDiv(Math.max(0, t.Sa - per.SaT), per.SaT) : 0;
   return obj;

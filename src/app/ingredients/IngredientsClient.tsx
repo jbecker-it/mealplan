@@ -11,7 +11,7 @@ interface Ing {
   aliases: string[];
 }
 
-const BASE_CATEGORIES = ["Obst & Gemüse", "Fleisch, Wurst & Fisch", "Käse, Eier & Molkerei", "Tiefkühl", "Backwaren, Cerealien & Aufstriche", "Kochen & Backen", "Öle, Soßen & Gewürze", "Fertiggerichte & Konserven", "Süßes & Salziges", "Kaffee, Tee & Kakao", "Getränke & Genussmittel", "Sonstige"];
+const BASE_CATEGORIES = ["Obst & Gemüse", "Fleisch, Wurst & Fisch", "Käse, Eier & Molkerei", "Tiefkühlkost", "Backwaren, Cerealien & Aufstriche", "Kochen & Backen", "Öle, Soßen & Gewürze", "Fertiggerichte & Konserven", "Süßes & Salziges", "Kaffee, Tee & Kakao", "Getränke & Genussmittel", "Sonstige"];
 const UNITS = ["g", "ml", "Stk", "EL", "TL", "Portion"];
 
 export default function IngredientsClient() {
