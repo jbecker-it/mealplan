@@ -1,4 +1,6 @@
-// ISO-Wochen-Helper: "2026-W46", Vorlage A/B-Wechsel (ungrade Woche = A)
+// ISO-Wochen-Helper: "2026-W46". Template A/B ist NICHT mehr wochenabhängig —
+// beide Templates liegen in derselben Woche, das aktive Template wählt die UI
+// (persistiert in settings.active_template, s. db.ts).
 export function isoWeekKey(d: Date): string {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = date.getUTCDay() || 7;
@@ -14,10 +16,6 @@ export function currentWeekKey(now = new Date()): string {
 
 export function weekNum(weekKey: string): number {
   return parseInt(weekKey.split("-W")[1] || "1", 10);
-}
-
-export function weekTemplate(weekKey: string): "A" | "B" {
-  return weekNum(weekKey) % 2 === 1 ? "A" : "B";
 }
 
 export function shiftWeek(weekKey: string, delta: number): string {

@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { generatePlan } from "@/lib/engine";
-import { currentWeekKey, shiftWeek, weekNum } from "@/lib/week";
+import { currentWeekKey } from "@/lib/week";
 
 // Wochenplan generieren: 2 Templates (A und B), je EIN Tag, der innerhalb
 // des Templates an allen 7 Tagen identisch gilt.
-// EINE Woche = EINES Template: A → ungerade Woche, B → die Folgewoche.
-// {week?} optional — Standard: aktuelle Woche; das Paar richtet sich
-// nach ihr (ungerade Woche W → A in W, B in W+1; gerade Woche W → A in W-1, B in W).
+// Beide Templates werden in die GLEICHE Woche geschrieben (Speicherschlüssel);
+// das Template ist NICHT mehr wochenabhängig — die UI wählt das AKTIVE aus
+// (settings.active_template), nur das aktive landet in der Einkaufsliste.
+// {week?} optional — Standard: aktuelle Woche.
 export async function POST(req: Request) {
   const denied = await requireAuth();
   if (denied) return denied;
@@ -20,8 +21,9 @@ export async function POST(req: Request) {
   } catch {
     // Body optional
   }
-  const aWeek = weekNum(week) % 2 === 1 ? week : shiftWeek(week, -1);
-  const bWeek = aWeek === week ? shiftWeek(aWeek, 1) : week;
+  // Beide Templates in die GLEICHE Woche (Template ist nicht mehr wochenabhängig).
+  const aWeek = week;
+  const bWeek = week;
 
   const profiles = db
     .prepare(
@@ -87,7 +89,7 @@ export async function POST(req: Request) {
   }
 
   // Beide Templates schreiben, je 7 identische Tage — A und B landen in
-  // ZWEI aufeinanderfolgenden Wochen (EINE Woche = EINES Template).
+  // derselben Woche; das AKTIVE Template wählt die UI (settings.active_template).
   const upsert = db.prepare(
     `INSERT INTO plan_meal(week_key, template_id, day, profile_id, slot, recipe_id, servings, kcal, p, c, f, sugar, salt)
      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -129,6 +131,6 @@ export async function POST(req: Request) {
     week: aWeek,
     weeks: { A: aWeek, B: bWeek },
     ms: res.ms,
-    note: `Plan generiert (${res.ms} ms): Template A → Woche ${aWeek}, Template B → Woche ${bWeek}.`,
+    note: `Plan generiert (${res.ms} ms): Template A und B für Woche ${week} — das aktive Template wählst du im Plan.`,
   });
 }

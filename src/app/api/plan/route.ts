@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { currentWeekKey, weekTemplate } from "@/lib/week";
+import { currentWeekKey } from "@/lib/week";
 
-// EINE Woche = EINES Template (ungerade Woche → A, gerade → B).
+// Template A/B ist NICHT mehr wochenabhängig (2026-11-19): beide Templates
+// liegen in derselben Woche, das aktive bestimmt die UI (settings).
+// ?template=A|B überschreibt die Auswahl, sonst gilt settings.active_template.
 // Das Template ist pro Tag identisch; der Client ruft standardmäßig Tag 0 ab.
 export async function GET(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const week = req.nextUrl.searchParams.get("week") || currentWeekKey();
-  const template = weekTemplate(week);
+  const tplParam = req.nextUrl.searchParams.get("template");
+  const template =
+    tplParam === "A" || tplParam === "B" ? tplParam : getActiveTemplate();
   const day = Math.min(
     6,
     Math.max(0, Number(req.nextUrl.searchParams.get("day") || 0))

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
-import { currentWeekKey, weekTemplate } from "@/lib/week";
+import { currentWeekKey } from "@/lib/week";
 
-// Vorlage in den Plan einplanen: {template_id, week?}
-// EINE Woche = EINES Template: ungerade Woche → A, gerade → B.
+// Vorlage in den Plan einplanen: {template_id, week?, template?}
+// Template = ?template oder das aktive (settings) — nicht mehr wochenabhängig.
 // Schreibt alle 7 Tage des Ziel-Templates. Jede Vorlage trägt pro Slot und
 // Profil ihr eigenes Rezept + Portion — so bleiben persönliche Slots
 // (Frühstück/Snack) je Person erhalten.
@@ -21,14 +21,15 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
   const body = await readJson(req);
   if (body === null) return badJson;
-  const { template_id, week } = body as {
+  const { template_id, week, template } = body as {
     template_id?: number;
     week?: string;
+    template?: string;
   };
   if (!template_id)
     return NextResponse.json({ error: "template_id fehlt" }, { status: 400 });
   const wk = week || currentWeekKey();
-  const tgt = weekTemplate(wk); // Woche bestimmt das Template
+  const tgt = template === "A" || template === "B" ? template : getActiveTemplate();
 
   const tpl = db
     .prepare("SELECT id, name, slots_json FROM template WHERE id = ?")

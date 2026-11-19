@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { currentWeekKey, weekTemplate } from "@/lib/week";
+import { currentWeekKey } from "@/lib/week";
+import { getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 import { grammageToGrams, reweUrl } from "@/lib/rewe";
@@ -19,6 +20,11 @@ export async function GET(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const week = req.nextUrl.searchParams.get("week") || currentWeekKey();
+  // Nur das ausgewählte Template gehört auf die Einkaufsliste (2026-11-19):
+  // ?template=A|B überschreibt, sonst gilt settings.active_template.
+  const tplParam = req.nextUrl.searchParams.get("template");
+  const template =
+    tplParam === "A" || tplParam === "B" ? tplParam : getActiveTemplate();
 
   const rows = db
     .prepare(
@@ -38,9 +44,9 @@ export async function GET(req: NextRequest) {
        GROUP BY i.id, LOWER(rri.unit)
        ORDER BY i.category, i.name COLLATE NOCASE`
     )
-    // Nur das für die Woche aktive Template (ungerade = A, gerade = B)
-    // zählt — sonst würde die Einkaufsliste A + B doppelt befüllen.
-    .all(week, weekTemplate(week)) as Array<Record<string, unknown>>;
+    // Nur das ausgewählte Template zählt — sonst würde die Einkaufsliste
+    // A + B doppelt befüllen.
+    .all(week, template) as Array<Record<string, unknown>>;
 
   // Küchen-Einheiten auf die Einheiten der Zutat-Entität normieren
   // (z. B. "1 EL Sojasoße" + "150 ml Sojasoße" → eine Zeile in ml)
@@ -205,6 +211,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     week,
+    template,
     groups: ordered,
     total: flat.length,
     checkedCount: flat.filter((r) => checkedSet.has(Number(r.ingredient_id))).length,

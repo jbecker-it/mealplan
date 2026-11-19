@@ -1,6 +1,5 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { shiftWeek, weekTemplate } from "@/lib/week";
 
 const SLOT_NAMES: Record<string, string> = {
   B: "Frühstück",
@@ -136,6 +135,7 @@ function MacroBar({
 
 export default function PlanClient() {
   const [week, setWeek] = useState("");
+  const [active, setActive] = useState<"A" | "B">("A");
   const [data, setData] = useState<PlanData | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -152,14 +152,16 @@ export default function PlanClient() {
   const [tplName, setTplName] = useState("");
   const [savingTpl, setSavingTpl] = useState(false);
 
-  const load = useCallback(async (w?: string) => {
+  const load = useCallback(async (t?: "A" | "B") => {
     setLoading(true);
-    const url = w ? `/api/plan?week=${encodeURIComponent(w)}&day=0` : "/api/plan?day=0";
+    // Ohne Parameter: Server liefert das aktive Template (settings.active_template)
+    const url = t ? `/api/plan?template=${t}&day=0` : "/api/plan?day=0";
     const r = await fetch(url, { cache: "no-store" });
     if (r.ok) {
       const j: PlanData = await r.json();
       setData(j);
       setWeek(j.week);
+      setActive(j.template);
     } else {
       setMsg({ text: "Fehler beim Laden des Plans", kind: "err" });
     }
@@ -170,9 +172,22 @@ export default function PlanClient() {
     void load();
   }, [load]);
 
-  const goto = (delta: number) => {
-    if (!week) return;
-    void load(shiftWeek(week, delta));
+  const switchTemplate = async (t: "A" | "B") => {
+    if (t === active) return;
+    setBusy(`tpl-${t}`);
+    const r = await fetch("/api/active-template", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template: t }),
+    });
+    setBusy(null);
+    if (r.ok) {
+      setActive(t);
+      setMsg({ text: `Template ${t} ist jetzt aktiv — Plan und Einkaufsliste zeigen es.`, kind: "ok" });
+      await load(t);
+    } else {
+      setMsg({ text: "Template-Umschaltung fehlgeschlagen", kind: "err" });
+    }
   };
 
   const generate = async () => {
@@ -190,7 +205,7 @@ export default function PlanClient() {
         : { text: j.error || "Generierung fehlgeschlagen", kind: "err" }
     );
     setBusy(null);
-    void load(week || undefined);
+    void load();
   };
 
   const openSwap = async (slot: string, profileId: number, profileName: string) => {
@@ -236,7 +251,7 @@ export default function PlanClient() {
     setBusy(null);
     setSwapSlot(null);
     setSuggestions(null);
-    void load(week || undefined);
+    void load();
   };
 
   const changeServings = async (profileId: number, slot: string, servings: number) => {
@@ -255,16 +270,17 @@ export default function PlanClient() {
         servings,
       }),
     });
-    void load(week || undefined);
+    void load();
   };
 
   const saveTemplate = async () => {
+    if (!data) return;
     if (!tplName.trim()) return;
     setSavingTpl(true);
     const r = await fetch("/api/templates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: tplName.trim(), week }),
+      body: JSON.stringify({ name: tplName.trim(), week, template: data.template }),
     });
     const j = await r.json();
     setMsg(
@@ -284,38 +300,40 @@ export default function PlanClient() {
       </div>
     );
 
-  const isOdd = weekTemplate(data.week) === "A";
   const cell = (pi: number, slot: string) =>
     data.rows.find((r) => r.profile_id === pi && r.slot === slot);
 
   return (
     <div className="space-y-4">
-      {/* Kopf: Titel + Wochen-Navigation + Template-Badge */}
+      {/* Kopf: Titel + Template-Umschalter + Aktionen */}
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-bold">Wochenplan</h1>
-        <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-900/60 p-1">
-          <button
-            onClick={() => goto(-1)}
-            disabled={!!busy}
-            className="rounded px-2.5 py-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-40"
-            title="Vorwoche"
-          >
-            ‹
-          </button>
-          <span className="min-w-[92px] px-1 text-center text-sm font-medium tabular-nums">
-            {week}
-          </span>
-          <button
-            onClick={() => goto(1)}
-            disabled={!!busy}
-            className="rounded px-2.5 py-1 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-40"
-            title="Folgewoche"
-          >
-            ›
-          </button>
+        <span className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm tabular-nums text-slate-300">
+          {week}
+        </span>
+        <div
+          className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-900/60 p-1"
+          role="group"
+          aria-label="Aktives Template"
+        >
+          {(["A", "B"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => void switchTemplate(t)}
+              disabled={!!busy}
+              className={`rounded px-3.5 py-1 text-sm font-semibold transition ${
+                active === t
+                  ? "bg-emerald-600 text-white"
+                  : "text-slate-400 hover:bg-slate-800 hover:text-white"
+              }`}
+              title={`Template ${t} aktivieren (Plan + Einkaufsliste)`}
+            >
+              {t}
+            </button>
+          ))}
         </div>
         <span className="rounded-lg bg-emerald-900/50 px-3 py-1.5 text-sm text-emerald-300">
-          Template <b>{data.template}</b> · {isOdd ? "ungerade Woche" : "gerade Woche"}
+          Aktiv: <b>{active}</b>
         </span>
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -329,8 +347,9 @@ export default function PlanClient() {
       </div>
 
       <p className="text-xs text-slate-500">
-        Eine Woche hat genau ein Template: ungerade Woche → <b>A</b>, gerade →{" "}
-        <b>B</b>. Innerhalb des Templates ist jeder der 7 Tage identisch.
+        Zwei Templates, frei wählbar: <b>A</b> oder <b>B</b>. Innerhalb des Templates
+        ist jeder der 7 Tage identisch. Die <b>Einkaufsliste</b> zeigt nur das
+        ausgewählte Template.
       </p>
 
       {msg && (
@@ -348,7 +367,7 @@ export default function PlanClient() {
           Noch kein Plan für Woche {week} (Template {data.template}).
           <br />
           Oben auf <b>„Neu generieren“</b> tippen — dann entstehen Template A und B
-          je eine Woche.
+          für diese Woche; du wählst oben mit <b>A</b>/<b>B</b>, welches aktiv ist.
         </div>
       )}
 

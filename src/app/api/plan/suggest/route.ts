@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { personObjective, MacroTotals } from "@/lib/engine";
-import { currentWeekKey, weekTemplate } from "@/lib/week";
+import { currentWeekKey } from "@/lib/week";
 
 // Vorschläge für den Austausch einer Mahlzeit, sortiert nach „bestem Ersatz"
 // für genau diese Position: Jeder Kandidat (Rezept × Portion 0.5/1/1.5) wird
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams;
   const week = sp.get("week") || currentWeekKey();
   const tplParam = sp.get("template");
-  const template = tplParam === "A" || tplParam === "B" ? tplParam : weekTemplate(week);
+  const template = tplParam === "A" || tplParam === "B" ? tplParam : getActiveTemplate();
   const slot = sp.get("slot");
   const profileId = Number(sp.get("profileId") || 0);
   if (!slot || !["B", "M", "A", "S"].includes(slot) || !profileId)

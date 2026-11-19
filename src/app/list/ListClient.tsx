@@ -31,6 +31,7 @@ interface Group {
 }
 interface ListData {
   week: string;
+  template?: string;
   groups: Group[];
   total: number;
   checkedCount: number;
@@ -67,6 +68,11 @@ export default function ListClient() {
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Einkaufsliste</h1>
         <span className="rounded-lg bg-card px-2.5 py-1 text-sm text-muted">{data.week}</span>
+        {data.template && (
+          <span className="rounded-lg bg-card px-2.5 py-1 text-sm text-muted" title="Nur dieses Template — wechseln im Wochenplan">
+            Template {data.template}
+          </span>
+        )}
         <span className="rounded-lg bg-card px-2.5 py-1 text-sm text-muted">
           {data.checkedCount}/{data.total} abgehakt
         </span>

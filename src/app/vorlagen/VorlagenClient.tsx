@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { currentWeekKey, shiftWeek, weekTemplate } from "@/lib/week";
+import { currentWeekKey } from "@/lib/week";
 
 const SLOT_NAMES: Record<string, string> = {
   B: "Frühstück",
@@ -28,11 +28,10 @@ export default function VorlagenClient() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
-  const [applyOffset, setApplyOffset] = useState<0 | 1>(0);
+  const [applyTpl, setApplyTpl] = useState<"A" | "B">("A");
   const [editing, setEditing] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const curWeek = currentWeekKey();
-  const nextWeek = shiftWeek(curWeek, 1);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/templates", { cache: "no-store" });
@@ -45,10 +44,9 @@ export default function VorlagenClient() {
   }, [load]);
 
   const apply = async (v: Vorlage) => {
-    const wk = applyOffset === 0 ? curWeek : nextWeek;
     if (
       !confirm(
-        `Vorlage „${v.name}“ in Woche ${wk} (Template ${weekTemplate(wk)}) einplanen? Das überschreibt den dortigen Plan (alle 7 Tage) und aktualisiert die Einkaufsliste.`
+        `Vorlage „${v.name}“ in Woche ${curWeek} als Template ${applyTpl} einplanen? Das überschreibt den dortigen Plan (alle 7 Tage).`
       )
     )
       return;
@@ -56,7 +54,7 @@ export default function VorlagenClient() {
     const r = await fetch("/api/templates/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template_id: v.id, week: wk }),
+      body: JSON.stringify({ template_id: v.id, week: curWeek, template: applyTpl }),
     });
     const j = await r.json();
     setMsg(
@@ -128,25 +126,24 @@ export default function VorlagenClient() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm text-slate-400">Vorlagen einplanen in Woche:</span>
+        <span className="text-sm text-slate-400">Vorlagen einplanen als Template:</span>
         <div className="flex rounded-lg overflow-hidden border border-white/10">
-          {([
-            [0, `${curWeek} · Template ${weekTemplate(curWeek)}`],
-            [1, `${nextWeek} · Template ${weekTemplate(nextWeek)}`],
-          ] as Array<[0 | 1, string]>).map(([off, label]) => (
+          {(["A", "B"] as const).map((t) => (
             <button
-              key={off}
-              onClick={() => setApplyOffset(off)}
+              key={t}
+              onClick={() => setApplyTpl(t)}
               className={`px-4 py-1.5 text-sm font-medium ${
-                applyOffset === off
+                applyTpl === t
                   ? "bg-emerald-600 text-white"
                   : "bg-slate-800/50 text-slate-400 hover:bg-slate-800"
               }`}
+              title={`Als Template ${t} einplanen (Woche ${curWeek})`}
             >
-              {label}
+              {t}
             </button>
           ))}
         </div>
+        <span className="text-xs text-slate-500">Woche {curWeek}</span>
       </div>
 
       {loading && <div className="text-sm text-slate-500 animate-pulse">Lade Vorlagen…</div>}
@@ -230,7 +227,7 @@ export default function VorlagenClient() {
                 disabled={busy === v.id}
                 className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium disabled:opacity-50"
               >
-                {busy === v.id ? "Plane ein…" : `In Woche ${applyOffset === 0 ? curWeek : nextWeek} einplanen`}
+                {busy === v.id ? "Plane ein…" : `Als Template ${applyTpl} einplanen`}
               </button>
               <span className="text-[11px] text-slate-600">
                 angelegt {new Date(v.created_at).toLocaleDateString("de-DE")}
