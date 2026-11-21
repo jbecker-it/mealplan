@@ -13,6 +13,10 @@
 //  3. Kohlenhydrate und Fett: Überschreitung vermeiden (hart gewichtet).
 //  4. SOFT: Zucker und Salz best-effort unter dem Tagesziel (nur Überschuss
 //     bestraft; Ziel 0 = unbeachtlich).
+//  5. SLOT-AUFWERTUNG (2026-11-21, User: „Nicht 200 kcal Mittag + 1000 kcal
+//     Abend“): Die kcal-Ziele der Slots (profile.slot_split; Fallback feste
+//     Anteile) werden eingehalten — innerhalb ±25 % des Slot-Ziels sanft
+//     (SLOT_FIT), darüber hart (SLOT_HARD).
 //
 // Diskrete Portionen: 0.5, 1, 1.5. Deterministisch: feste Iterationsreihenfolge.
 
@@ -36,6 +40,7 @@ export interface Person {
   F: number; // Fett-Ziel (hart)
   SuT?: number; // Zucker-Ziel (best-effort, 0 = unbeachtlich)
   SaT?: number; // Salz-Ziel (best-effort, 0 = unbeachtlich)
+  slotK?: { B: number; M: number; A: number; S: number } | null; // kcal-Ziel je Slot (profile.slot_split; 0/leer = Fallback-Anteile)
   inc: string[];
   exc: string[];
 }
@@ -74,7 +79,9 @@ const P_SHORT = 4.0; // Protein unter Ziel ("müssen mindestens voll")
 const K_SHORT = 3.0; // kcal unter Ziel ("möglichst nah voll")
 const P_OVER = 0.3; // Protein über Ziel (erlaubt, leicht)
 const SOFT = 0.4; // Zucker/Salz-Überschuss (best-effort)
-const SLOT_FIT = 0.15; // Slot-Anteile (kcal + Protein)
+const SLOT_FIT = 0.3; // Slot-Anteile (kcal + Protein) — sanft innerhalb der Band
+const SLOT_BAND = 0.25; // Slot-kcal-Band: ±25 % des Slot-Ziels bleibt soft
+const SLOT_HARD = 1.5; // Slot-kcal-Ausreißer außerhalb der Band (extreme Schieflage verhindern)
 const DUP = 1.0; // gleiche Rezepte innerhalb einer Person
 const CROSS = 0.6; // Rezepte, die Template A schon nutzt (nur für B)
 
@@ -98,6 +105,13 @@ export interface PersonTargets {
 
 function safeDiv(x: number, d: number): number {
   return d > 0 ? x / d : 0;
+}
+
+// kcal-Ziel eines Slots für eine Person: profile.slot_split (wenn gesetzt),
+// sonst feste Anteile des Tagesziels (SLOT_KCAL).
+function slotTargetK(per: Person, s: Slot): number {
+  const v = per.slotK?.[s];
+  return v && v > 0 ? v : SLOT_KCAL[s] * per.K;
 }
 
 // Reine Makro-Bewertung eines Tages (ohne Slot-Fit/Abwechslung).
@@ -140,7 +154,13 @@ function personDayObjective(day: PersonDay, per: Person): number {
   let obj = personObjective(t, per);
   for (const s of SLOTS) {
     const { recipe, servings } = day[s];
-    obj += SLOT_FIT * (Math.abs(recipe.kcal * servings - SLOT_KCAL[s] * per.K) / per.K);
+    // Slot-kcal: innerhalb ±SLOT_BAND des Slot-Ziels sanft zentrieren,
+    // außerhalb hart bestrafen (verhindert z. B. 200-kcal-Mittag/1000-kcal-Abend).
+    const target = slotTargetK(per, s);
+    const dev = Math.abs(recipe.kcal * servings - target);
+    const band = SLOT_BAND * target;
+    obj += SLOT_FIT * (Math.min(dev, band) / per.K);
+    obj += SLOT_HARD * (Math.max(0, dev - band) / per.K);
     obj += SLOT_FIT * (Math.abs(recipe.p * servings - SLOT_P[s] * per.P) / per.P) * 0.7;
   }
   const seen = new Map<number, number>();
@@ -185,10 +205,12 @@ function candidates(
   limit = 18
 ): RecipeOpt[] {
   const out = recs.filter((r) => allowed(r, slot, per) && !(avoid?.has(r.id)));
-  out.sort(
-    (a, b) =>
-      Math.abs(a.kcal - SLOT_KCAL[slot] * per.K) - Math.abs(b.kcal - SLOT_KCAL[slot] * per.K)
-  );
+  // Portions-bewusste Sortierung: Rang nach der besten erreichbaren Nähe zum
+  // Slot-Ziel (über alle Portionen). Sonst fallen z. B. Pancakes (450 kcal Basis,
+  // mit 1,5 Portion exakt 675 ≈ Ziel 670) aus dem Kandidaten-Pool.
+  const tgt = slotTargetK(per, slot);
+  const fit = (r: RecipeOpt) => Math.min(...SIZES.map((s) => Math.abs(r.kcal * s - tgt)));
+  out.sort((a, b) => fit(a) - fit(b));
   return out.slice(0, limit);
 }
 
@@ -218,6 +240,10 @@ function initial(persons: Person[], recs: RecipeOpt[]): PersonDay[] {
 // Ein Tag optimieren: beste (Rezept, Portion) je Slot pro Person.
 // Gemeinsame Slots (Mittag/Abend) werden für beide Personen mit demselben
 // Rezept besetzt, aber mit jeweils eigener Portion.
+// Move-Typen: (1) Einzel-Slot-Wechsel, (2) Paar-Move — zwei Slots gleichzeitig
+// (z. B. Frühstück rauf + Abendessen runter). Einzel-Moves können kompensierende
+// Änderungen nie finden, weil jede Einzelveränderung die Makros verschlechtert;
+// nur der Paar-Move löst die Slot-Aufteilung auf.
 function optimize(
   persons: Person[],
   recs: RecipeOpt[],
@@ -227,13 +253,14 @@ function optimize(
 ): PersonDay[] {
   const days = start.map((d) => ({ ...d, B: { ...d.B }, M: { ...d.M }, A: { ...d.A }, S: { ...d.S } }));
   let best = totalObjective(days, persons, recs, recsA);
+  const sharedSlot = (s: Slot) => persons.length === 2 && (s === "M" || s === "A");
   for (let it = 0; it < iterations; it++) {
     let improved = false;
     for (let pi = 0; pi < days.length; pi++) {
       const per = persons[pi] ?? persons[0];
       for (const slot of SLOTS) {
         const cur = days[pi][slot];
-        const shared = persons.length === 2 && (slot === "M" || slot === "A");
+        const shared = sharedSlot(slot);
         const used = new Set<number>();
         for (const s of SLOTS) if (s !== slot) used.add(days[pi][s].recipe.id);
         const cands = candidates(recs, slot, per, used, 14);
@@ -260,6 +287,67 @@ function optimize(
             }
           }
         }
+      }
+      // ---- Paar-Move: zwei Slots gleichzeitig (beste Änderung, ein Commit) ----
+      let pairBest = best;
+      let pairMove: {
+        si: Slot;
+        sj: Slot;
+        ci: RecipeOpt;
+        qi: number;
+        cj: RecipeOpt;
+        qj: number;
+      } | null = null;
+      for (let a = 0; a < SLOTS.length; a++) {
+        for (let b = a + 1; b < SLOTS.length; b++) {
+          const si = SLOTS[a];
+          const sj = SLOTS[b];
+          const curI = days[pi][si];
+          const curJ = days[pi][sj];
+          const used = new Set<number>();
+          for (const s of SLOTS) if (s !== si && s !== sj) used.add(days[pi][s].recipe.id);
+          const cI = candidates(recs, si, per, used, 8);
+          const cJ = candidates(recs, sj, per, used, 8);
+          for (const recI of cI) {
+            for (const qI of SIZES) {
+              if (recI.id === curI.recipe.id && qI === curI.servings) continue;
+              for (const recJ of cJ) {
+                for (const qJ of SIZES) {
+                  if (recJ.id === curJ.recipe.id && qJ === curJ.servings) continue;
+                  days[pi][si] = { recipe: recI, servings: qI };
+                  days[pi][sj] = { recipe: recJ, servings: qJ };
+                  if (sharedSlot(si))
+                    days[1 - pi][si] = { recipe: recI, servings: days[1 - pi][si].servings };
+                  if (sharedSlot(sj))
+                    days[1 - pi][sj] = { recipe: recJ, servings: days[1 - pi][sj].servings };
+                  const obj = totalObjective(days, persons, recs, recsA);
+                  if (obj < pairBest) {
+                    pairBest = obj;
+                    pairMove = { si, sj, ci: recI, qi: qI, cj: recJ, qj: qJ };
+                  }
+                  // Rollback (inkl. Partner bei geteilten Slots)
+                  days[pi][si] = { recipe: curI.recipe, servings: curI.servings };
+                  days[pi][sj] = { recipe: curJ.recipe, servings: curJ.servings };
+                  if (sharedSlot(si))
+                    days[1 - pi][si] = { recipe: curI.recipe, servings: days[1 - pi][si].servings };
+                  if (sharedSlot(sj))
+                    days[1 - pi][sj] = { recipe: curJ.recipe, servings: days[1 - pi][sj].servings };
+                }
+              }
+            }
+          }
+        }
+      }
+      if (pairMove && pairBest < best - 1e-9) {
+        const { si, sj, ci, qi, cj, qj } = pairMove;
+        days[pi][si] = { recipe: ci, servings: qi };
+        days[pi][sj] = { recipe: cj, servings: qj };
+        if (sharedSlot(si))
+          days[1 - pi][si] = { recipe: ci, servings: days[1 - pi][si].servings };
+        if (sharedSlot(sj))
+          days[1 - pi][sj] = { recipe: cj, servings: days[1 - pi][sj].servings };
+        best = pairBest;
+        improved = true;
       }
     }
     if (!improved) break;

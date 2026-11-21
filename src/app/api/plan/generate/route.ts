@@ -30,7 +30,7 @@ export async function POST(req: Request) {
       `SELECT id, kcal_target, p_target, c_target, f_target,
               COALESCE(sugar_target, 0) AS sugar_target,
               COALESCE(salt_target, 0) AS salt_target,
-              tag_include, tag_exclude
+              slot_split, tag_include, tag_exclude
        FROM profile ORDER BY id`
     )
     .all() as Array<Record<string, unknown>>;
@@ -39,6 +39,20 @@ export async function POST(req: Request) {
       { error: "Mindestens zwei Profile mit Makro-Zielen werden benötigt." },
       { status: 400 }
     );
+  const parseSplit = (raw: unknown) => {
+    if (!raw) return null;
+    try {
+      const o = JSON.parse(String(raw)) as Record<string, unknown>;
+      return {
+        B: Number(o.B) || 0,
+        M: Number(o.M) || 0,
+        A: Number(o.A) || 0,
+        S: Number(o.S) || 0,
+      };
+    } catch {
+      return null;
+    }
+  };
   const persons = profiles.map((p) => ({
     id: Number(p.id),
     K: Number(p.kcal_target) || 2000,
@@ -47,6 +61,7 @@ export async function POST(req: Request) {
     F: Number(p.f_target) || 70,
     SuT: Number(p.sugar_target) || 0,
     SaT: Number(p.salt_target) || 0,
+    slotK: parseSplit(p.slot_split),
     inc: String(p.tag_include || "").split(",").map((s) => s.trim()).filter(Boolean),
     exc: String(p.tag_exclude || "").split(",").map((s) => s.trim()).filter(Boolean),
   }));
