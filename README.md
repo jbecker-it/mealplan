@@ -103,7 +103,7 @@ fertig — der Rest ist im Git-Repo.
 
 ## Auf dem Handy
 
-Die Oberfläche ist für Handys optimiert: unten eine Tab-Leiste (Plan,
+Die Oberfläche ist für Handys optimiert (Hoch- und Querformat): unten eine Tab-Leiste (Plan,
 Liste, Rezepte, REWE, Mehr), oben nur eine schmale Kopfzeile.
 
 **Als App auf den Startbildschirm** (Android/Chrome): Seite öffnen →

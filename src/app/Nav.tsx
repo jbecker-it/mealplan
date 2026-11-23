@@ -103,7 +103,7 @@ export default function Nav() {
   return (
     <>
       {/* Desktop */}
-      <nav className="sticky top-0 z-40 hidden border-b border-line bg-background/95 backdrop-blur md:block">
+      <nav className="sticky top-0 z-40 hidden border-b border-line bg-background/95 backdrop-blur lg:block">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-1 px-4 py-2">
           <span className="mr-2 font-bold text-accent">Mealplan</span>
           {LINKS.map(([href, label]) => (
@@ -123,7 +123,7 @@ export default function Nav() {
       </nav>
 
       {/* Mobil: Kopfzeile */}
-      <header className="pt-safe sticky top-0 z-40 border-b border-line bg-background/95 backdrop-blur md:hidden">
+      <header className="pt-safe sticky top-0 z-40 border-b border-line bg-background/95 backdrop-blur lg:hidden">
         <div className="flex h-11 items-center px-4">
           <span className="font-bold text-accent">Mealplan</span>
           {current && <span className="ml-2 truncate text-sm text-muted">· {current}</span>}
@@ -131,7 +131,7 @@ export default function Nav() {
       </header>
 
       {/* Mobil: Tab-Leiste unten */}
-      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-background/95 backdrop-blur md:hidden">
+      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-background/95 backdrop-blur lg:hidden">
         <div className="grid grid-cols-5">
           {TABS.map((t) => {
             const active = isActive(path, t.href);
@@ -163,7 +163,7 @@ export default function Nav() {
 
       {/* Mobil: „Mehr“-Sheet */}
       {moreOpen && (
-        <div className="fixed inset-0 z-30 md:hidden" onClick={() => setMoreOpen(false)}>
+        <div className="fixed inset-0 z-30 lg:hidden" onClick={() => setMoreOpen(false)}>
           <div className="absolute inset-0 bg-black/50" />
           <div
             className="mb-tabbar absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-line bg-card p-2"

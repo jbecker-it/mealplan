@@ -37,7 +37,7 @@ export default async function RootLayout({
       <body className={`${geist.className} min-h-screen bg-background text-foreground`}>
         {authed && <Nav />}
         <AuthRedirect />
-        <main className={`mx-auto max-w-6xl px-4 py-4 md:py-6 ${authed ? "pb-tabbar md:pb-6" : ""}`}>{children}</main>
+        <main className={`mx-auto max-w-6xl px-4 py-4 lg:py-6 ${authed ? "pb-tabbar lg:pb-6" : ""}`}>{children}</main>
       </body>
     </html>
   );
