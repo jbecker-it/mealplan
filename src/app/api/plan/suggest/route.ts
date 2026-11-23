@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { personObjective, MacroTotals } from "@/lib/engine";
-import { currentWeekKey } from "@/lib/week";
+import { personObjective, MacroTotals, tagAllowed } from "@/lib/engine";
+import { PLAN_KEY } from "@/lib/plan";
+import { profileTagNames } from "@/lib/ingredients";
 
 // Vorschläge für den Austausch einer Mahlzeit, sortiert nach „bestem Ersatz"
 // für genau diese Position: Jeder Kandidat (Rezept × Portion 0.5/1/1.5) wird
@@ -14,7 +15,6 @@ export async function GET(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const sp = new URL(req.url).searchParams;
-  const week = sp.get("week") || currentWeekKey();
   const tplParam = sp.get("template");
   const template = tplParam === "A" || tplParam === "B" ? tplParam : getActiveTemplate();
   const slot = sp.get("slot");
@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
        FROM plan_meal pm
        WHERE pm.week_key = ? AND pm.template_id = ? AND pm.day = 0`
     )
-    .all(week, template) as Array<Record<string, unknown>>;
+    .all(PLAN_KEY, template) as Array<Record<string, unknown>>;
   const dayRows = rows.filter((r) => Number(r.profile_id) === profileId);
   if (dayRows.length === 0)
     return NextResponse.json({ error: "Kein Plan vorhanden — zuerst generieren." }, { status: 400 });
@@ -83,19 +83,22 @@ export async function GET(req: NextRequest) {
   const recs = db
     .prepare(
       `SELECT r.id, r.title, r.slots, r.kcal, r.protein_g, r.carbs_g, r.fat_g, r.sugar_g, r.salt_g,
-              (SELECT group_concat(t.name, ',') FROM recipe_tag rt
+              (SELECT group_concat(t.name, '|') FROM recipe_tag rt
                JOIN tag t ON t.id = rt.tag_id WHERE rt.recipe_id = r.id) AS tags
        FROM recipe r WHERE r.archived = 0 AND r.kcal IS NOT NULL`
     )
     .all() as Array<Record<string, unknown>>;
-  const exc = String(me.tag_exclude || "").split(",").map((s) => s.trim()).filter(Boolean);
+  // Tag-Filter: eigenes Profil; bei gemeinsamen Slots auch der Partner.
+  // „Nur einschließen“ greift nur, wenn danach noch Kandidaten übrig sind.
   const allowedSlots = (s: string) => s.split(",").map((x) => x.trim());
-  const cands = recs.filter((r) => {
-    if (!allowedSlots(String(r.slots || "")).includes(slot)) return false;
-    const t = String(r.title).toLowerCase();
-    if (exc.some((w) => t.includes(w.toLowerCase()))) return false;
-    return true;
-  });
+  const recTags = (r: Record<string, unknown>) => String(r.tags || "").split("|").filter(Boolean);
+  const filters = [me, ...(shared && other ? [other] : [])].map((p) => ({
+    inc: profileTagNames(p.tag_include),
+    exc: profileTagNames(p.tag_exclude),
+  }));
+  const inSlot = recs.filter((r) => allowedSlots(String(r.slots || "")).includes(slot));
+  let cands = inSlot.filter((r) => filters.every((f) => tagAllowed(recTags(r), f.inc, f.exc, true)));
+  if (!cands.length) cands = inSlot.filter((r) => filters.every((f) => tagAllowed(recTags(r), f.inc, f.exc, false)));
 
   const SIZES = [0.5, 1, 1.5];
   interface Suggestion {
@@ -167,7 +170,6 @@ export async function GET(req: NextRequest) {
   const top = out.slice(0, 10).map((s, i) => ({ ...s, rank: i + 1 }));
 
   return NextResponse.json({
-    week,
     template,
     slot,
     profileId,

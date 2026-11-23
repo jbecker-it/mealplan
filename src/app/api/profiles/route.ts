@@ -36,7 +36,7 @@ export async function PATCH(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const body = raw as {
     id: number;
     name?: string;

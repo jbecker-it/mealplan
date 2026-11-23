@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const m = raw as ReweMarket;
   if (!m.wwIdent || !m.name)
     return NextResponse.json({ error: "wwIdent und name fehlen" }, { status: 400 });

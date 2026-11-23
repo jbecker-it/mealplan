@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     else db.exec("DELETE FROM session");
     db.exec(`
       DELETE FROM plan_meal;
+      DELETE FROM plan_snapshot;
       DELETE FROM check_state;
       DELETE FROM recipe_tag;
       DELETE FROM recipe_ingredient;

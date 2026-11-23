@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
+import { findIngredientId } from "@/lib/ingredients";
+import { parseAmount } from "@/lib/units";
 
 export async function GET() {
   const denied = await requireAuth();
   if (denied) return denied;
   const rows = db
     .prepare(
-      `SELECT i.id, i.name, i.category, i.unit_default, i.rewe_product_id,
+      `SELECT i.id, i.name, i.category, i.unit_default, i.per_el, i.rewe_product_id,
               (SELECT COUNT(*) FROM recipe_ingredient ri WHERE ri.ingredient_id = i.id) AS recipe_count
        FROM ingredient i ORDER BY i.category, i.name COLLATE NOCASE`
     )
@@ -31,23 +33,22 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
-  const { name, category, unit } = raw as {
+  if (raw === null) return badJson();
+  const { name, category, unit, per_el } = raw as {
     name?: string;
     category?: string;
     unit?: string;
+    per_el?: number | string | null;
   };
   if (!name?.trim())
     return NextResponse.json({ error: "Name fehlt" }, { status: 400 });
-  const exists = db
-    .prepare("SELECT id FROM ingredient WHERE name = ?")
-    .get(name.trim()) as { id: number } | undefined;
-  if (exists)
-    return NextResponse.json({ error: "Existiert bereits" }, { status: 409 });
+  if (findIngredientId(name) != null)
+    return NextResponse.json({ error: "Existiert bereits (als Zutat oder Alias)" }, { status: 409 });
+  const pe = parseAmount(per_el ?? null);
   const id = Number(
     db
-      .prepare("INSERT INTO ingredient(name, category, unit_default) VALUES (?,?,?)")
-      .run(name.trim(), category || "Trockenwaren", unit || "g")
+      .prepare("INSERT INTO ingredient(name, category, unit_default, per_el) VALUES (?,?,?,?)")
+      .run(name.trim(), category?.trim() || "Kochen & Backen", unit || "g", pe && pe > 0 ? pe : null)
       .lastInsertRowid
   );
   return NextResponse.json({ id });
@@ -57,12 +58,13 @@ export async function PATCH(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
-  const { id, name, category, unit } = raw as {
+  if (raw === null) return badJson();
+  const { id, name, category, unit, per_el } = raw as {
     id?: number;
     name?: string;
     category?: string;
     unit?: string;
+    per_el?: number | string | null;
   };
   if (!id)
     return NextResponse.json({ error: "id fehlt" }, { status: 400 });
@@ -74,10 +76,8 @@ export async function PATCH(req: NextRequest) {
   if (name?.trim()) {
     const n = name.trim();
     if (n !== cur.name) {
-      const clash = db
-        .prepare("SELECT id FROM ingredient WHERE name = ? AND id != ?")
-        .get(n, id) as { id: number } | undefined;
-      if (clash)
+      const clash = findIngredientId(n);
+      if (clash != null && clash !== id)
         return NextResponse.json({ error: "Name existiert bereits" }, { status: 409 });
       db.prepare("UPDATE ingredient SET name = ? WHERE id = ?").run(n, id);
     }
@@ -86,6 +86,10 @@ export async function PATCH(req: NextRequest) {
     db.prepare("UPDATE ingredient SET category = ? WHERE id = ?").run(category.trim(), id);
   if (unit?.trim())
     db.prepare("UPDATE ingredient SET unit_default = ? WHERE id = ?").run(unit.trim(), id);
+  if (per_el !== undefined) {
+    const pe = parseAmount(per_el);
+    db.prepare("UPDATE ingredient SET per_el = ? WHERE id = ?").run(pe && pe > 0 ? pe : null, id);
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -93,7 +97,7 @@ export async function DELETE(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const { id } = raw as { id?: number };
   if (!id)
     return NextResponse.json({ error: "id fehlt" }, { status: 400 });

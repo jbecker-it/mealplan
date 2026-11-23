@@ -12,7 +12,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   if (denied) return denied;
   const id = Number((await ctx.params).id);
   const body = await readJson(req);
-  if (body === null) return badJson;
+  if (body === null) return badJson();
   const name = String((body as { name?: string }).name || "").trim();
   if (!name)
     return NextResponse.json({ error: "Name fehlt" }, { status: 400 });

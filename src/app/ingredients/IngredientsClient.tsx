@@ -1,18 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BASE_UNITS } from "@/lib/units";
 
 interface Ing {
   id: number;
   name: string;
   category: string;
   unit_default: string;
+  per_el: number | null;
   recipe_count: number;
   aliases: string[];
 }
 
 const BASE_CATEGORIES = ["Obst & Gemüse", "Fleisch, Wurst & Fisch", "Käse, Eier & Molkerei", "Tiefkühlkost", "Backwaren, Cerealien & Aufstriche", "Kochen & Backen", "Öle, Soßen & Gewürze", "Fertiggerichte & Konserven", "Süßes & Salziges", "Kaffee, Tee & Kakao", "Getränke & Genussmittel", "Sonstige"];
-const UNITS = ["g", "ml", "Stk", "EL", "TL", "Portion"];
+const UNITS: readonly string[] = BASE_UNITS;
 
 export default function IngredientsClient() {
   const [ings, setIngs] = useState<Ing[]>([]);
@@ -23,12 +25,14 @@ export default function IngredientsClient() {
   const [nName, setNName] = useState("");
   const [nCat, setNCat] = useState("Kochen & Backen");
   const [nUnit, setNUnit] = useState("g");
+  const [nPerEl, setNPerEl] = useState("");
 
   // Bearbeiten / Alias pro Zeile
   const [editId, setEditId] = useState<number | null>(null);
   const [eName, setEName] = useState("");
   const [eCat, setECat] = useState("Kochen & Backen");
   const [eUnit, setEUnit] = useState("g");
+  const [ePerEl, setEPerEl] = useState("");
   const [aliasFor, setAliasFor] = useState<number | null>(null);
   const [aliasText, setAliasText] = useState("");
 
@@ -84,12 +88,13 @@ export default function IngredientsClient() {
     const r = await fetch("/api/ingredients", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: nName, category: nCat, unit: nUnit }),
+      body: JSON.stringify({ name: nName, category: nCat, unit: nUnit, per_el: nPerEl || null }),
     });
     const d = await r.json();
     if (r.ok) {
       flash(`„${nName.trim()}“ angelegt`);
       setNName("");
+      setNPerEl("");
       load();
     } else flash(d.error ?? "Fehler", false);
   }
@@ -99,6 +104,7 @@ export default function IngredientsClient() {
     setEName(i.name);
     setECat(i.category || "Sonstige");
     setEUnit(i.unit_default || "g");
+    setEPerEl(i.per_el != null ? String(i.per_el).replace(".", ",") : "");
     setAliasFor(null);
   }
 
@@ -107,7 +113,7 @@ export default function IngredientsClient() {
     const r = await fetch("/api/ingredients", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: editId, name: eName, category: eCat, unit: eUnit }),
+      body: JSON.stringify({ id: editId, name: eName, category: eCat, unit: eUnit, per_el: ePerEl || null }),
     });
     const d = await r.json();
     if (r.ok) {
@@ -193,6 +199,11 @@ export default function IngredientsClient() {
 
       <div className="mb-6 rounded-xl border border-line bg-card/50 p-3">
         <p className="mb-2 text-sm font-semibold">Neue Zutat</p>
+        <p className="mb-2 text-xs text-muted">
+          Einheit = wie die Zutat auf der Einkaufsliste summiert wird. „1 EL =“ rechnet
+          EL/TL aus Rezepten um (1 TL = ⅓ EL). Ohne Angabe: ml-Zutaten 15 ml/EL,
+          sonst steht „x EL“ separat auf der Liste.
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={nName}
@@ -213,11 +224,14 @@ export default function IngredientsClient() {
               <option key={c} value={c} />
             ))}
           </datalist>
-          <select value={nUnit} onChange={(e) => setNUnit(e.target.value)} className={selCls}>
+          <select value={nUnit} onChange={(e) => setNUnit(e.target.value)} className={selCls} title="Einheit auf der Einkaufsliste">
             {UNITS.map((u) => (
               <option key={u} value={u}>{u}</option>
             ))}
           </select>
+          {(nUnit === "g" || nUnit === "ml") && (
+            <PerElInput value={nPerEl} onChange={setNPerEl} unit={nUnit} />
+          )}
           <button
             onClick={addIng}
             className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold text-background hover:opacity-90"
@@ -254,11 +268,14 @@ export default function IngredientsClient() {
                       <option key={c} value={c} />
                     ))}
                   </datalist>
-                  <select value={eUnit} onChange={(e) => setEUnit(e.target.value)} className={selCls}>
-                    {UNITS.map((u) => (
+                  <select value={eUnit} onChange={(e) => setEUnit(e.target.value)} className={selCls} title="Einheit auf der Einkaufsliste">
+                    {[...new Set([...UNITS, eUnit])].map((u) => (
                       <option key={u} value={u}>{u}</option>
                     ))}
                   </select>
+                  {(eUnit === "g" || eUnit === "ml") && (
+                    <PerElInput value={ePerEl} onChange={setEPerEl} unit={eUnit} />
+                  )}
                   <button onClick={saveEdit} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-background">
                     Speichern
                   </button>
@@ -271,6 +288,11 @@ export default function IngredientsClient() {
                   <div className="min-w-40 flex-1">
                     <span className="text-sm font-medium">{i.name}</span>
                     <span className="ml-2 text-xs text-muted">{i.unit_default}</span>
+                    {i.per_el != null && (
+                      <span className="ml-2 text-xs text-muted" title="Umrechnung für EL/TL in Rezepten">
+                        1 EL = {String(i.per_el).replace(".", ",")} {i.unit_default}
+                      </span>
+                    )}
                     {i.recipe_count > 0 && (
                       <span className="ml-2 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
                         in {i.recipe_count} Rezept{i.recipe_count === 1 ? "" : "en"}
@@ -355,5 +377,21 @@ export default function IngredientsClient() {
         <p className="text-sm text-muted">Keine Zutaten gefunden.</p>
       )}
     </main>
+  );
+}
+
+function PerElInput({ value, onChange, unit }: { value: string; onChange: (v: string) => void; unit: string }) {
+  return (
+    <label className="flex items-center gap-1 text-xs text-muted" title="Umrechnung für EL/TL in Rezepten (1 TL = ⅓ EL)">
+      1 EL =
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        inputMode="decimal"
+        placeholder={unit === "ml" ? "15" : "z. B. 10"}
+        className="w-16 rounded-lg border border-line bg-card px-2 py-1.5 text-sm outline-none focus:border-accent"
+      />
+      {unit}
+    </label>
   );
 }

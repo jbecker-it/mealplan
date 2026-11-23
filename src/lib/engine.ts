@@ -2,8 +2,9 @@
 //
 // Ein Template = EINE Tag-Planung (4 Slots × 2 Profile), die innerhalb des
 // Templates an allen 7 Tagen der Woche identisch gilt (Meal-Prep-Logik).
-// Template A und B werden unabhängig generiert; B wird bestraft, Rezepte
-// zu verwenden, die A schon nutzt (Abwechslung zwischen den Wochentypen).
+// Jedes Template wird einzeln generiert (nur das aktive); Rezepte des
+// anderen Templates werden leicht bestraft (Abwechslung zwischen A und B).
+// Profil-Tags: „ausschließen“ hart, „nur einschließen“ wenn möglich.
 //
 // Constraint-Hierarchie (Vorgabe Johannes, 2026-11-17):
 //  1. Protein: möglichst mindestens voll — Defizit hart bestraft,
@@ -30,6 +31,7 @@ export interface RecipeOpt {
   f: number;
   Su?: number | null; // Zucker g/Portion (best-effort-Makro)
   Sa?: number | null; // Salz g/Portion (best-effort-Makro)
+  tags?: string[]; // Rezept-Tags (für Profil-Filter)
 }
 
 export interface Person {
@@ -41,8 +43,8 @@ export interface Person {
   SuT?: number; // Zucker-Ziel (best-effort, 0 = unbeachtlich)
   SaT?: number; // Salz-Ziel (best-effort, 0 = unbeachtlich)
   slotK?: { B: number; M: number; A: number; S: number } | null; // kcal-Ziel je Slot (profile.slot_split; 0/leer = Fallback-Anteile)
-  inc: string[];
-  exc: string[];
+  inc: string[]; // Tag-Namen: nur Rezepte mit mind. einem dieser Tags (leer = alle)
+  exc: string[]; // Tag-Namen: Rezepte mit einem dieser Tags nie
 }
 
 export interface SlotChoice {
@@ -57,12 +59,6 @@ export interface PersonDay {
   M: SlotChoice;
   A: SlotChoice;
   S: SlotChoice;
-}
-
-export interface PlanResult {
-  A: PersonDay[]; // genau 2 Einträge (Person 0, Person 1)
-  B: PersonDay[];
-  ms: number;
 }
 
 const SIZES = [0.5, 1, 1.5];
@@ -190,10 +186,36 @@ function totalObjective(
   return total;
 }
 
-function allowed(rec: RecipeOpt, slot: Slot, per: Person): boolean {
+// Tag-Filter des Profils (case-insensitiv). Ausschluss ist hart; der
+// Einschluss („nur diese Tags“) greift nur, wenn er für den Slot überhaupt
+// Rezepte übrig lässt — sonst bliebe der Slot leer.
+export function tagAllowed(tags: string[] | undefined, inc: string[], exc: string[], strictInc = true): boolean {
+  const t = new Set((tags ?? []).map((x) => x.toLocaleLowerCase("de-DE")));
+  for (const w of exc) if (t.has(w.toLocaleLowerCase("de-DE"))) return false;
+  if (strictInc && inc.length && !inc.some((w) => t.has(w.toLocaleLowerCase("de-DE")))) return false;
+  return true;
+}
+
+function allowed(rec: RecipeOpt, slot: Slot, per: Person, strictInc = true): boolean {
   if (!rec.slots.includes(slot)) return false;
-  const t = rec.title.toLowerCase();
-  for (const w of per.exc) if (w && t.includes(w.toLowerCase())) return false;
+  return tagAllowed(rec.tags, per.inc, per.exc, strictInc);
+}
+
+// Gemeinsame Slots: das Rezept muss für BEIDE Personen erlaubt sein.
+let PERSONS: Person[] = [];
+const incUsable = new Map<string, boolean>();
+function allowedFor(rec: RecipeOpt, slot: Slot, per: Person, recs: RecipeOpt[]): boolean {
+  const key = `${per.id}:${slot}`;
+  if (!incUsable.has(key))
+    incUsable.set(key, per.inc.length > 0 && recs.some((r) => allowed(r, slot, per, true)));
+  return allowed(rec, slot, per, incUsable.get(key)!);
+}
+function allowedShared(rec: RecipeOpt, slot: Slot, per: Person, recs: RecipeOpt[]): boolean {
+  if (!allowedFor(rec, slot, per, recs)) return false;
+  if (PERSONS.length === 2 && (slot === "M" || slot === "A")) {
+    const other = PERSONS.find((p) => p !== per);
+    if (other && !allowedFor(rec, slot, other, recs)) return false;
+  }
   return true;
 }
 
@@ -204,7 +226,9 @@ function candidates(
   avoid?: Set<number>,
   limit = 18
 ): RecipeOpt[] {
-  const out = recs.filter((r) => allowed(r, slot, per) && !(avoid?.has(r.id)));
+  let out = recs.filter((r) => allowedShared(r, slot, per, recs) && !(avoid?.has(r.id)));
+  // Partner-Filter lässt nichts übrig → wenigstens eigene Filter einhalten
+  if (!out.length) out = recs.filter((r) => allowedFor(r, slot, per, recs) && !(avoid?.has(r.id)));
   // Portions-bewusste Sortierung: Rang nach der besten erreichbaren Nähe zum
   // Slot-Ziel (über alle Portionen). Sonst fallen z. B. Pancakes (450 kcal Basis,
   // mit 1,5 Portion exakt 675 ≈ Ziel 670) aus dem Kandidaten-Pool.
@@ -214,8 +238,9 @@ function candidates(
   return out.slice(0, limit);
 }
 
-function initial(persons: Person[], recs: RecipeOpt[]): PersonDay[] {
-  return persons.map((per, i) => {
+function initial(persons: Person[], recs: RecipeOpt[], rnd: () => number = () => 0): PersonDay[] {
+  const days: PersonDay[] = [];
+  persons.forEach((per, i) => {
     const day: PersonDay = {
       profileId: per.id,
       B: { recipe: recs[0], servings: 1 },
@@ -226,15 +251,18 @@ function initial(persons: Person[], recs: RecipeOpt[]): PersonDay[] {
     for (const slot of SLOTS) {
       const c = candidates(recs, slot, per, undefined, 6);
       if (c.length) {
-        // deterministisch: erster passierbarer Kandidat, ggf. Portion 0.5/1.5
+        // Gemeinsame Slots (Mittag/Abend): beide starten mit demselben Rezept
+        const shared = persons.length === 2 && (slot === "M" || slot === "A");
+        const r = Math.floor(rnd() * c.length);
         day[slot] = {
-          recipe: c[i % c.length],
-          servings: SIZES[(i + SLOTS.indexOf(slot)) % SIZES.length],
+          recipe: shared ? (i === 0 ? c[r] : days[0][slot].recipe) : c[(i + r) % c.length],
+          servings: SIZES[(i + SLOTS.indexOf(slot) + Math.floor(rnd() * 3)) % SIZES.length],
         };
       }
     }
-    return day;
+    days.push(day);
   });
+  return days;
 }
 
 // Ein Tag optimieren: beste (Rezept, Portion) je Slot pro Person.
@@ -355,19 +383,63 @@ function optimize(
   return days;
 }
 
-export function generatePlan(persons: Person[], recipes: RecipeOpt[]): PlanResult {
+/** Vergleichs-Signatur eines Plans (Profil/Slot → Rezept × Portion). */
+export function planSignature(
+  days: Array<{ profileId: number } & Record<Slot, { recipe: { id: number }; servings: number }>>
+): string {
+  return days
+    .flatMap((d) => SLOTS.map((s) => `${d.profileId}${s}${d[s].recipe.id}x${d[s].servings}`))
+    .sort()
+    .join(",");
+}
+
+// Kleiner deterministischer Zufallsgenerator (mulberry32)
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * EIN Template generieren. avoid = Rezepte des anderen Templates
+ * (werden leicht bestraft → Abwechslung zwischen A und B).
+ * Mehrere zufällige Startpunkte; gewählt wird zufällig unter den
+ * Ergebnissen, die höchstens 12 % schlechter sind als das beste — so
+ * liefert „Neu generieren“ jedes Mal eine andere, aber gute Kombination.
+ */
+export function generateTemplate(
+  persons: Person[],
+  recipes: RecipeOpt[],
+  avoid?: Set<number>,
+  seed = Date.now(),
+  previous?: string
+): { days: PersonDay[]; ms: number } {
   const t0 = Date.now();
   if (!persons.length || !recipes.length) {
     throw new Error("Es werden mindestens ein Profil und ein Rezept benötigt.");
   }
   const recs = recipes.filter((r) => r.kcal > 0 && r.slots.length > 0);
   if (!recs.length) throw new Error("Keine Rezepte mit kcal-Werten gefunden.");
-
-  const startA = initial(persons, recs);
-  const A = optimize(persons, recs, startA);
-  const recsA = new Set<number>();
-  for (const d of A) for (const s of SLOTS) recsA.add(d[s].recipe.id);
-  const B = optimize(persons, recs, initial(persons, recs), recsA);
-
-  return { A, B, ms: Date.now() - t0 };
+  PERSONS = persons;
+  incUsable.clear();
+  const rnd = rng(seed);
+  const av = avoid && avoid.size ? avoid : undefined;
+  const runs: Array<{ days: PersonDay[]; obj: number }> = [];
+  for (let k = 0; k < 10; k++) {
+    const start = initial(persons, recs, k === 0 ? () => 0 : rnd);
+    const days = optimize(persons, recs, start, av);
+    runs.push({ days, obj: totalObjective(days, persons, recs, av) });
+  }
+  const best = Math.min(...runs.map((r) => r.obj));
+  const good = runs.filter((r) => r.obj <= best * 1.12 + 1e-6);
+  // Bevorzugt eine Variante, die sich vom bisherigen Stand unterscheidet
+  const fresh = good.filter((r) => planSignature(r.days) !== previous);
+  const pool = fresh.length ? fresh : good;
+  const pick = pool[Math.floor(rnd() * pool.length)];
+  return { days: pick.days, ms: Date.now() - t0 };
 }

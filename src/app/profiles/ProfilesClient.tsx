@@ -78,6 +78,28 @@ export default function ProfilesClient() {
     load();
   }
 
+  async function renameTag(t: Tag) {
+    const name = prompt("Tag umbenennen:", t.name)?.trim();
+    if (!name || name === t.name) return;
+    const r = await fetch("/api/tags", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id, name }),
+    });
+    if (!r.ok) alert((await r.json()).error || "Fehler");
+    load();
+  }
+
+  async function deleteTag(t: Tag) {
+    if (!confirm(`Tag „${t.name}“ löschen? Es wird aus allen Rezepten und Profil-Filtern entfernt.`)) return;
+    await fetch("/api/tags", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id }),
+    });
+    load();
+  }
+
   const sumSplit = (p: Profile) => {
     const s = p.slot_split || {};
     return (s.B || 0) + (s.M || 0) + (s.A || 0) + (s.S || 0);
@@ -95,8 +117,16 @@ export default function ProfilesClient() {
           <div className="mb-1 text-xs uppercase text-muted">Tags verwalten</div>
           <div className="flex flex-wrap gap-1.5">
             {tags.map((t) => (
-              <span key={t.id} className="rounded-lg bg-card2 px-2.5 py-1 text-sm">{t.name}</span>
+              <span key={t.id} className="inline-flex items-center gap-1 rounded-lg bg-card2 px-2.5 py-1 text-sm">
+                <button onClick={() => renameTag(t)} title="Umbenennen" className="hover:text-accent">
+                  #{t.name}
+                </button>
+                <button onClick={() => deleteTag(t)} title="Tag löschen" className="text-muted hover:text-danger">
+                  ×
+                </button>
+              </span>
             ))}
+            {tags.length === 0 && <span className="text-xs text-muted">Noch keine Tags — Tags vergibst du am einfachsten direkt im Rezept.</span>}
           </div>
         </div>
         <span className="flex-1" />
@@ -167,9 +197,12 @@ export default function ProfilesClient() {
                 ))}
               </div>
 
-              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+              <h3 className="mb-0.5 text-xs font-semibold uppercase tracking-wide text-muted">
                 Tags nur einschließen
               </h3>
+              <p className="mb-1.5 text-xs text-muted">
+                Nur Rezepte mit mindestens einem dieser Tags (gilt pro Slot, solange es passende Rezepte gibt). Leer = alle.
+              </p>
               <div className="mb-3 flex flex-wrap gap-1.5">
                 {tags.map((t) => (
                   <button
@@ -191,7 +224,8 @@ export default function ProfilesClient() {
                 {tags.length === 0 && <span className="text-xs text-muted">Keine Tags — oben anlegen.</span>}
               </div>
 
-              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">Tags ausschließen</h3>
+              <h3 className="mb-0.5 text-xs font-semibold uppercase tracking-wide text-muted">Tags ausschließen</h3>
+              <p className="mb-1.5 text-xs text-muted">Rezepte mit diesen Tags bekommt diese Person nie — auch nicht bei gemeinsamen Mahlzeiten.</p>
               <div className="mb-4 flex flex-wrap gap-1.5">
                 {tags.map((t) => (
                   <button

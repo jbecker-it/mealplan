@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
+import { upsertIngredient, upsertTag } from "@/lib/ingredients";
+import { normalizeAmount, parseAmount } from "@/lib/units";
 
 interface NewIngredient {
   name?: string;
@@ -15,7 +17,8 @@ export async function GET(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const q = req.nextUrl.searchParams.get("q") || "";
-  const tag = req.nextUrl.searchParams.get("tag");
+  // ?tag=1&tag=3 → Rezepte, die ALLE gewählten Tags tragen
+  const tagIds = req.nextUrl.searchParams.getAll("tag").map(Number).filter((n) => n > 0);
   const fav = req.nextUrl.searchParams.get("fav");
   const includeArchived = req.nextUrl.searchParams.get("archived") === "1";
 
@@ -31,9 +34,9 @@ export async function GET(req: NextRequest) {
     params.push(`%${q}%`);
   }
   if (fav === "1") sql += " AND r.favorite = 1";
-  if (tag) {
+  for (const t of tagIds) {
     sql += " AND r.id IN (SELECT recipe_id FROM recipe_tag WHERE tag_id = ?)";
-    params.push(Number(tag));
+    params.push(t);
   }
   sql += " GROUP BY r.id ORDER BY r.favorite DESC, r.title COLLATE NOCASE";
   const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
@@ -50,7 +53,7 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const body = raw as {
     title: string;
     description?: string;
@@ -71,27 +74,7 @@ export async function POST(req: NextRequest) {
   if (!body.title?.trim())
     return NextResponse.json({ error: "Titel fehlt" }, { status: 400 });
 
-  const upsertIng = (name: string, category?: string): number => {
-    const n = name.trim();
-    const row = db.prepare("SELECT id FROM ingredient WHERE name = ?").get(n) as
-      | { id: number }
-      | undefined;
-    if (row) return Number(row.id);
-    const info = db
-      .prepare("INSERT INTO ingredient(name, category, unit_default) VALUES (?,?,?)")
-      .run(n, category || "Trockenwaren", "g");
-    return Number(info.lastInsertRowid);
-  };
-  const upsertTag = (name: string): number => {
-    const n = name.trim();
-    const row = db.prepare("SELECT id FROM tag WHERE name = ?").get(n) as
-      | { id: number }
-      | undefined;
-    if (row) return Number(row.id);
-    const info = db.prepare("INSERT INTO tag(name) VALUES (?)").run(n);
-    return Number(info.lastInsertRowid);
-  };
-
+  const num = (v: unknown) => parseAmount(v as string | number | null | undefined);
   const tx = db.transaction(() => {
     const id = Number(
       db
@@ -101,12 +84,12 @@ export async function POST(req: NextRequest) {
         .run(
           body.title.trim(),
           body.description || null,
-          body.kcal ?? null,
-          body.p ?? null,
-          body.c ?? null,
-          body.f ?? null,
-          body.sugar_g ?? body.sugar ?? null,
-          body.salt_g ?? body.salt ?? null,
+          num(body.kcal),
+          num(body.p),
+          num(body.c),
+          num(body.f),
+          num(body.sugar_g ?? body.sugar),
+          num(body.salt_g ?? body.salt),
           body.favorite ? 1 : 0,
           (body.slots?.length ? body.slots : ["B", "M", "A", "S"]).join(",")
         )
@@ -114,10 +97,11 @@ export async function POST(req: NextRequest) {
     );
     body.ingredients?.forEach((ing, i) => {
       if (!ing.name?.trim() && ing.id == null) return;
-      const ingId = ing.id ?? upsertIng(ing.name!);
+      const ingId = ing.id ?? upsertIngredient(ing.name!).id;
+      const na = normalizeAmount(num(ing.amount), ing.unit);
       db.prepare(
         "INSERT INTO recipe_ingredient(recipe_id, ingredient_id, amount, unit, note, sort) VALUES (?,?,?,?,?,?)"
-      ).run(id, ingId, ing.amount ?? null, ing.unit || null, ing.note || null, i);
+      ).run(id, ingId, na.amount, na.unit || null, ing.note || null, i);
     });
     body.steps?.forEach((s, i) => {
       if (s.trim())

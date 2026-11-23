@@ -2,6 +2,11 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureSeed } from "./seed";
+import { normalizeAmount } from "./units";
+
+// Fester Plan-Schlüssel (siehe lib/plan.ts) — hier dupliziert, um einen
+// Import-Zyklus db ↔ plan zu vermeiden.
+const PLAN_KEY = "current";
 
 export const DB_PATH =
   process.env.MEALPLAN_DB ||
@@ -115,6 +120,15 @@ CREATE TABLE IF NOT EXISTS check_state (
   PRIMARY KEY (week_key, ingredient_id)
 );
 
+-- Verlauf: gesicherte Stände von Template A/B (vor Generieren/Überschreiben)
+CREATE TABLE IF NOT EXISTS plan_snapshot (
+  id INTEGER PRIMARY KEY,
+  label TEXT NOT NULL,
+  template_id TEXT NOT NULL,
+  rows_json TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT,
@@ -200,33 +214,29 @@ function createDb(): DbInstance {
   } catch {
     // Index konnte nicht angelegt werden — Upserts fallen auf Delete-then-Insert zurück
   }
-  // Migration: Template A/B ist NICHT mehr wochenabhängig (2026-11-19).
-  // Beide Templates liegen ab jetzt in der NEUESTEN Plan-Woche; die UI
-  // wählt per settings.active_template aus (getActiveTemplate/setActiveTemplate).
-  // Idempotent: je Template wird nur die NEUSTE Woche nach der Ziel-Woche
-  // verschoben — frühere Historie bleibt unangetastet.
   try {
-    const target = d
-      .prepare("SELECT MAX(week_key) AS w FROM plan_meal")
-      .get() as { w: string | null };
-    if (target.w) {
-      for (const tid of ["A", "B"]) {
-        const newest = d
-          .prepare(
-            "SELECT MAX(week_key) AS w FROM plan_meal WHERE template_id = ?"
-          )
-          .get(tid) as { w: string | null };
-        if (newest.w && newest.w !== target.w) {
-          d.prepare("DELETE FROM plan_meal WHERE week_key = ? AND template_id = ?")
-            .run(target.w, tid);
-          d.prepare(
-            "UPDATE plan_meal SET week_key = ? WHERE template_id = ? AND week_key = ?"
-          ).run(target.w, tid, newest.w);
-        }
+    migrateWeeklyPlans(d);
+  } catch (e) {
+    console.error("Plan-Migration fehlgeschlagen:", e);
+  }
+  // Migration: EL/TL-Umrechnung pro Zutat (g bzw. ml pro EL)
+  addCol("ALTER TABLE ingredient ADD COLUMN per_el REAL");
+  // Migration: Einheiten in Rezepten vereinheitlichen (kg→g, „stk“→„Stück“,
+  // „el“→„EL“ …). Idempotent — bereits kanonische Einheiten bleiben gleich.
+  try {
+    const rows = d
+      .prepare("SELECT id, amount, unit FROM recipe_ingredient WHERE unit IS NOT NULL")
+      .all() as Array<{ id: number; amount: number | null; unit: string }>;
+    const up = d.prepare("UPDATE recipe_ingredient SET amount = ?, unit = ? WHERE id = ?");
+    d.transaction(() => {
+      for (const r of rows) {
+        const n = normalizeAmount(r.amount, r.unit);
+        if (n.unit !== r.unit || n.amount !== r.amount) up.run(n.amount, n.unit, r.id);
       }
-    }
+    })();
+    d.prepare("UPDATE ingredient SET unit_default = 'Stück' WHERE unit_default IN ('Stk', 'stk', 'stück')").run();
   } catch {
-    // Migration überspringbar — neue Daten werden korrekt geschrieben
+    // überspringbar
   }
   // Migration: Zutaten-Kategorien auf die REWE-Markt-Abteilungen umstellen
   // (2026-11-17, Commit 4ebaa6d+). Nur Zutaten, die noch die alten
@@ -321,4 +331,50 @@ export function setActiveTemplate(t: "A" | "B"): void {
     `INSERT INTO settings(key, value, created_at) VALUES(?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, created_at = excluded.created_at`
   ).run(ACTIVE_KEY, t, Date.now());
+}
+
+/**
+ * Migration von wochenbasierten Plänen (vor 2026-11-23): Jede alte
+ * (Woche, Template)-Kombination wird als Snapshot gesichert; der jeweils
+ * NEUESTE Stand von A bzw. B wird zum dauerhaften Template. Idempotent:
+ * danach liegen nur noch Zeilen mit PLAN_KEY in plan_meal.
+ */
+function migrateWeeklyPlans(d: DbInstance): void {
+  const groups = d
+    .prepare(
+      `SELECT DISTINCT week_key, template_id FROM plan_meal
+       WHERE week_key != ? ORDER BY week_key, template_id`
+    )
+    .all(PLAN_KEY) as Array<{ week_key: string; template_id: string }>;
+  if (groups.length === 0) return;
+  d.transaction(() => {
+    const ins = d.prepare("INSERT INTO plan_snapshot(label, template_id, rows_json) VALUES (?,?,?)");
+    for (const g of groups) {
+      const rows = d
+        .prepare(
+          `SELECT profile_id, slot, recipe_id, servings FROM plan_meal
+           WHERE week_key = ? AND template_id = ? AND day = 0 ORDER BY profile_id, slot`
+        )
+        .all(g.week_key, g.template_id);
+      if (rows.length) ins.run(`Woche ${g.week_key} · Template ${g.template_id}`, g.template_id, JSON.stringify(rows));
+    }
+    for (const tid of ["A", "B"]) {
+      const has = d
+        .prepare("SELECT 1 FROM plan_meal WHERE week_key = ? AND template_id = ? LIMIT 1")
+        .get(PLAN_KEY, tid);
+      if (has) continue;
+      const newest = d
+        .prepare("SELECT MAX(week_key) AS w FROM plan_meal WHERE template_id = ? AND week_key != ?")
+        .get(tid, PLAN_KEY) as { w: string | null };
+      if (newest.w)
+        d.prepare("UPDATE plan_meal SET week_key = ? WHERE template_id = ? AND week_key = ?").run(
+          PLAN_KEY,
+          tid,
+          newest.w
+        );
+    }
+    d.prepare("DELETE FROM plan_meal WHERE week_key != ?").run(PLAN_KEY);
+    // Abhak-Status der Einkaufsliste hing an der Woche → neu beginnen
+    d.prepare("DELETE FROM check_state WHERE week_key NOT LIKE 'current-%'").run();
+  })();
 }

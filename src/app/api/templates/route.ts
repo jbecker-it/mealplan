@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
-import { currentWeekKey } from "@/lib/week";
+import { PLAN_KEY } from "@/lib/plan";
 
 // Vorlagen (eigene Template-Vorlagen):
 // GET  → Liste mit Rezept-Titeln je Slot
 // POST → neue Vorlage aus dem aktuellen Plan speichern
-//        {name, week?, template?} — Template = ?template oder das aktive (settings)
+//        {name, template?} — Template = ?template oder das aktive (settings)
 
 // slots_json: Slot → Profil-ID → {recipe_id, servings}
 // Persönliche Slots dürfen je Profil unterschiedliche Rezepte haben;
@@ -25,14 +25,14 @@ interface SlotView {
 }
 type SlotsView = Record<string, Record<string, SlotView> | null>;
 
-function buildSlotsJson(week: string, template: string): SlotsJson | null {
+function buildSlotsJson(template: string): SlotsJson | null {
   const rows = db
     .prepare(
       `SELECT pm.profile_id, pm.slot, pm.recipe_id, pm.servings
        FROM plan_meal pm
        WHERE pm.week_key = ? AND pm.template_id = ? AND pm.day = 0`
     )
-    .all(week, template) as Array<Record<string, unknown>>;
+    .all(PLAN_KEY, template) as Array<Record<string, unknown>>;
   if (rows.length === 0) return null;
   const slots: SlotsJson = { B: {}, M: {}, A: {}, S: {} };
   for (const r of rows) {
@@ -92,10 +92,9 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const body = await readJson(req);
-  if (body === null) return badJson;
-  const { name, week, template } = body as {
+  if (body === null) return badJson();
+  const { name, template } = body as {
     name?: string;
-    week?: string;
     template?: string;
   };
   const nm = (name || "").trim();
@@ -103,13 +102,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Name fehlt" }, { status: 400 });
   if (nm.length > 60)
     return NextResponse.json({ error: "Name zu lang (max. 60 Zeichen)" }, { status: 400 });
-  const wk = week || currentWeekKey();
   const tpl = template === "A" || template === "B" ? template : getActiveTemplate();
 
-  const slots = buildSlotsJson(wk, tpl);
+  const slots = buildSlotsJson(tpl);
   if (!slots)
     return NextResponse.json(
-      { error: `Kein Plan für ${wk} (Template ${tpl}) vorhanden — zuerst generieren.` },
+      { error: `Template ${tpl} ist leer — zuerst generieren.` },
       { status: 400 }
     );
   const clash = db
@@ -128,6 +126,6 @@ export async function POST(req: NextRequest) {
     ok: true,
     id,
     name: nm,
-    note: `Vorlage aus ${wk} / Template ${tpl} gespeichert — unter „Vorlagen“ in den Plan einplanbar.`,
+    note: `Vorlage aus Template ${tpl} gespeichert — unter „Vorlagen“ in den Plan einplanbar.`,
   });
 }

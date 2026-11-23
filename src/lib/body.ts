@@ -17,7 +17,7 @@ export async function readJson(req: NextRequest): Promise<Record<string, unknown
   }
 }
 
-export const badJson = NextResponse.json(
-  { error: "Ungültiges JSON" },
-  { status: 400 }
-);
+// Funktion statt Konstante: eine Response darf nur EINMAL zurückgegeben
+// werden (der Body-Stream ist danach verbraucht).
+export const badJson = () =>
+  NextResponse.json({ error: "Ungültiges JSON" }, { status: 400 });

@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 const SLOT_NAMES: Record<string, string> = {
   B: "Frühstück",
@@ -44,13 +45,19 @@ interface Totals {
   meals: number;
 }
 interface PlanData {
-  week: string;
   template: "A" | "B";
   day: number;
   rows: Row[];
   totals: Record<string, Totals>;
   profiles: Profile[];
   hasPlan: boolean;
+}
+interface Snapshot {
+  id: number;
+  label: string;
+  template: string;
+  created_at: string;
+  meals: Array<{ profile_id: number; slot: string; servings: number; title: string }>;
 }
 interface Suggestion {
   rank: number;
@@ -134,7 +141,6 @@ function MacroBar({
 }
 
 export default function PlanClient() {
-  const [week, setWeek] = useState("");
   const [active, setActive] = useState<"A" | "B">("A");
   const [data, setData] = useState<PlanData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -160,7 +166,6 @@ export default function PlanClient() {
     if (r.ok) {
       const j: PlanData = await r.json();
       setData(j);
-      setWeek(j.week);
       setActive(j.template);
     } else {
       setMsg({ text: "Fehler beim Laden des Plans", kind: "err" });
@@ -191,21 +196,60 @@ export default function PlanClient() {
   };
 
   const generate = async () => {
+    if (
+      data?.hasPlan &&
+      !confirm(
+        `Template ${active} neu generieren?\n\nDas andere Template bleibt unverändert. Der aktuelle Stand von ${active} wird im Verlauf gesichert und kann wiederhergestellt werden.`
+      )
+    )
+      return;
     setBusy("generate");
     setMsg(null);
     const r = await fetch("/api/plan/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(week ? { week } : {}),
+      body: JSON.stringify({ template: active }),
     });
     const j = await r.json();
     setMsg(
       r.ok
-        ? { text: j.note || "Plan generiert — Template A und B", kind: "ok" }
+        ? { text: j.note || `Template ${active} generiert`, kind: "ok" }
         : { text: j.error || "Generierung fehlgeschlagen", kind: "err" }
     );
     setBusy(null);
-    void load();
+    void load(active);
+    if (showHistory) void loadHistory();
+  };
+
+  // ── Verlauf ──
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<{ items: Snapshot[]; profiles: Array<{ id: number; name: string }> } | null>(null);
+  const loadHistory = useCallback(async () => {
+    const r = await fetch("/api/plan/history", { cache: "no-store" });
+    if (r.ok) setHistory(await r.json());
+  }, []);
+  const restore = async (snap: Snapshot, t: "A" | "B") => {
+    if (!confirm(`„${snap.label}“ als Template ${t} wiederherstellen?\n\nDer aktuelle Stand von ${t} wird vorher gesichert.`)) return;
+    setBusy(`restore-${snap.id}`);
+    const r = await fetch("/api/plan/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: snap.id, template: t }),
+    });
+    const j = await r.json();
+    setMsg(r.ok ? { text: j.note, kind: "ok" } : { text: j.error || "Wiederherstellen fehlgeschlagen", kind: "err" });
+    setBusy(null);
+    void load(active);
+    void loadHistory();
+  };
+  const delSnap = async (snap: Snapshot) => {
+    if (!confirm(`„${snap.label}“ aus dem Verlauf löschen?`)) return;
+    await fetch("/api/plan/history", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: snap.id }),
+    });
+    void loadHistory();
   };
 
   const openSwap = async (slot: string, profileId: number, profileName: string) => {
@@ -214,7 +258,7 @@ export default function PlanClient() {
     setSuggestions(null);
     setSuggestLoading(true);
     const r = await fetch(
-      `/api/plan/suggest?week=${encodeURIComponent(week)}&template=${data.template}&slot=${slot}&profileId=${profileId}`,
+      `/api/plan/suggest?template=${data.template}&slot=${slot}&profileId=${profileId}`,
       { cache: "no-store" }
     );
     if (r.ok) setSuggestions((await r.json()).suggestions as Suggestion[]);
@@ -229,7 +273,6 @@ export default function PlanClient() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        week,
         template: data.template,
         profileId: swapSlot.profileId,
         slot: swapSlot.slot,
@@ -262,7 +305,6 @@ export default function PlanClient() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        week,
         template: data.template,
         profileId,
         slot,
@@ -280,7 +322,7 @@ export default function PlanClient() {
     const r = await fetch("/api/templates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: tplName.trim(), week, template: data.template }),
+      body: JSON.stringify({ name: tplName.trim(), template: data.template }),
     });
     const j = await r.json();
     setMsg(
@@ -308,9 +350,6 @@ export default function PlanClient() {
       {/* Kopf: Titel + Template-Umschalter + Aktionen */}
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-bold">Wochenplan</h1>
-        <span className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm tabular-nums text-slate-300">
-          {week}
-        </span>
         <div
           className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-900/60 p-1"
           role="group"
@@ -341,15 +380,16 @@ export default function PlanClient() {
             disabled={!!busy}
             className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
           >
-            {busy === "generate" ? "Optimiere…" : "Neu generieren"}
+            {busy === "generate" ? "Optimiere…" : `${active} neu generieren`}
           </button>
         </div>
       </div>
 
       <p className="text-xs text-slate-500">
-        Zwei Templates, frei wählbar: <b>A</b> oder <b>B</b>. Innerhalb des Templates
-        ist jeder der 7 Tage identisch. Die <b>Einkaufsliste</b> zeigt nur das
-        ausgewählte Template.
+        Zwei dauerhafte Templates, frei wählbar: <b>A</b> oder <b>B</b> — unabhängig von
+        der Kalenderwoche. Innerhalb des Templates ist jeder der 7 Tage identisch. Die{" "}
+        <b>Einkaufsliste</b> zeigt nur das ausgewählte Template. Vor jedem Überschreiben
+        wird der alte Stand im <b>Verlauf</b> gesichert.
       </p>
 
       {msg && (
@@ -364,10 +404,10 @@ export default function PlanClient() {
 
       {!data.hasPlan && (
         <div className="rounded-xl border border-dashed border-white/15 p-8 text-center text-slate-400">
-          Noch kein Plan für Woche {week} (Template {data.template}).
+          Template {data.template} ist noch leer.
           <br />
-          Oben auf <b>„Neu generieren“</b> tippen — dann entstehen Template A und B
-          für diese Woche; du wählst oben mit <b>A</b>/<b>B</b>, welches aktiv ist.
+          Oben auf <b>„{data.template} neu generieren“</b> tippen, eine Vorlage einplanen
+          oder unten einen früheren Stand aus dem Verlauf wiederherstellen.
         </div>
       )}
 
@@ -433,9 +473,16 @@ export default function PlanClient() {
                                 </button>
                               ))}
                             </div>
-                            <span className="w-24 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-slate-400">
+                            <span className="w-20 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-slate-400">
                               {fmt(r.kcal, 1)} kcal
                             </span>
+                            <Link
+                              href={`/cook/${r.recipe_id}`}
+                              title="Kochmodus (Portionen frei wählbar)"
+                              className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400 hover:text-emerald-400"
+                            >
+                              Kochen
+                            </Link>
                           </>
                         ) : (
                           <span className="flex-1 text-xs text-slate-600">— leer —</span>
@@ -472,6 +519,69 @@ export default function PlanClient() {
           </button>
         </div>
       )}
+
+      {/* Verlauf: frühere Stände von A/B */}
+      <div className="rounded-xl border border-white/10 bg-slate-900/50">
+        <button
+          onClick={() => {
+            const next = !showHistory;
+            setShowHistory(next);
+            if (next) void loadHistory();
+          }}
+          className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium"
+        >
+          <span>Verlauf · frühere Stände wiederherstellen</span>
+          <span className="text-slate-500">{showHistory ? "▲" : "▼"}</span>
+        </button>
+        {showHistory && (
+          <div className="space-y-2 border-t border-white/10 p-4">
+            {!history && <div className="text-sm text-slate-500">Lade…</div>}
+            {history && history.items.length === 0 && (
+              <div className="text-sm text-slate-500">
+                Noch keine gesicherten Stände. Vor jedem Neu-Generieren, Vorlage-Einplanen
+                oder Wiederherstellen wird der alte Stand hier abgelegt.
+              </div>
+            )}
+            {history?.items.map((snap) => (
+              <div key={snap.id} className="rounded-lg border border-white/5 bg-slate-800/40 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">{snap.label}</span>
+                  <span className="text-xs text-slate-500">{snap.created_at}</span>
+                  <span className="flex-1" />
+                  {(["A", "B"] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => void restore(snap, t)}
+                      disabled={!!busy}
+                      className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                    >
+                      Als {t} wiederherstellen
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => void delSnap(snap)}
+                    className="rounded px-2 py-1 text-xs text-slate-500 hover:text-rose-400"
+                    title="Aus dem Verlauf löschen"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="mt-2 grid gap-x-4 gap-y-0.5 text-xs text-slate-400 sm:grid-cols-2">
+                  {history.profiles.map((p) => (
+                    <div key={p.id}>
+                      <span className="font-semibold text-slate-300">{p.name}:</span>{" "}
+                      {SLOT_ORDER.map((sl) => snap.meals.find((m) => m.profile_id === p.id && m.slot === sl))
+                        .filter(Boolean)
+                        .map((m) => `${m!.title} (${m!.servings}×)`)
+                        .join(" · ") || "—"}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Swap-Dialog */}
       {swapSlot && (

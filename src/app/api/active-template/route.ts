@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const body = await readJson(req);
-  if (body === null) return badJson;
+  if (body === null) return badJson();
   const t = (body as { template?: string }).template;
   if (t !== "A" && t !== "B")
     return NextResponse.json({ error: "template muss „A“ oder „B“ sein" }, { status: 400 });
