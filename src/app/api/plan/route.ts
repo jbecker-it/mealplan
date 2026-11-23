@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { currentWeekKey } from "@/lib/week";
+import { PLAN_KEY } from "@/lib/plan";
 
-// Template A/B ist NICHT mehr wochenabhängig (2026-11-19): beide Templates
-// liegen in derselben Woche, das aktive bestimmt die UI (settings).
+// Template A/B sind dauerhaft (keine Kalenderwochen, s. lib/plan.ts);
+// das aktive bestimmt die UI (settings).
 // ?template=A|B überschreibt die Auswahl, sonst gilt settings.active_template.
 // Das Template ist pro Tag identisch; der Client ruft standardmäßig Tag 0 ab.
 export async function GET(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
-  const week = req.nextUrl.searchParams.get("week") || currentWeekKey();
   const tplParam = req.nextUrl.searchParams.get("template");
   const template =
     tplParam === "A" || tplParam === "B" ? tplParam : getActiveTemplate();
@@ -22,7 +21,7 @@ export async function GET(req: NextRequest) {
   const rows = db
     .prepare(
       `SELECT pm.profile_id, pr.name AS profile_name, pm.slot, pm.recipe_id,
-              rm.title, pm.servings, pm.kcal, pm.p, pm.c, pm.f,
+              rm.title, rm.archived, pm.servings, pm.kcal, pm.p, pm.c, pm.f,
               COALESCE(pm.sugar, 0) AS sugar, COALESCE(pm.salt, 0) AS salt
        FROM plan_meal pm
        JOIN recipe rm ON rm.id = pm.recipe_id
@@ -30,7 +29,7 @@ export async function GET(req: NextRequest) {
        WHERE pm.week_key = ? AND pm.template_id = ? AND pm.day = ?
        ORDER BY pm.profile_id, pm.slot`
     )
-    .all(week, template, day) as Array<Record<string, unknown>>;
+    .all(PLAN_KEY, template, day) as Array<Record<string, unknown>>;
 
   const profiles = db
     .prepare(
@@ -56,7 +55,6 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    week,
     template,
     day,
     rows,

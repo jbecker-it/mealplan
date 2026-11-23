@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const { ingredientId, productId, product } = raw as {
     ingredientId: number;
     productId: string | null;

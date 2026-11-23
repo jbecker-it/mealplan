@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { fmtQty, isCountable } from "@/lib/units";
 
 interface Rewe {
   productId: string;
@@ -19,8 +20,8 @@ interface Item {
   id: number;
   name: string;
   category: string;
-  unit: string | null;
-  qty: number;
+  ingredient_id: number;
+  amounts: Array<{ qty: number | null; unit: string }>;
   used_in: string;
   checked: boolean;
   rewe: Rewe | null;
@@ -30,7 +31,6 @@ interface Group {
   items: Item[];
 }
 interface ListData {
-  week: string;
   template?: string;
   groups: Group[];
   total: number;
@@ -51,14 +51,32 @@ export default function ListClient() {
   useEffect(load, [load]);
 
   async function toggle(it: Item) {
+    if (!data) return;
     const next = !it.checked;
-    it.checked = next; // optimistic
-    if (data) setData({ ...data, checkedCount: data.checkedCount + (next ? 1 : -1) });
+    // optimistisch, ohne State zu mutieren
+    setData({
+      ...data,
+      checkedCount: data.checkedCount + (next ? 1 : -1),
+      groups: data.groups.map((g) => ({
+        ...g,
+        items: g.items.map((x) => (x.ingredient_id === it.ingredient_id ? { ...x, checked: next } : x)),
+      })),
+    });
     await fetch("/api/list", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ week: data?.week, ingredientId: it.id, checked: next }),
+      body: JSON.stringify({ template: data.template, ingredientId: it.ingredient_id, checked: next }),
     });
+  }
+
+  async function resetChecks() {
+    if (!data || !confirm("Alle Haken entfernen?")) return;
+    await fetch("/api/list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template: data.template, reset: true }),
+    });
+    load();
   }
 
   if (!data) return <div className="py-20 text-center text-muted">Lade…</div>;
@@ -67,7 +85,6 @@ export default function ListClient() {
     <div>
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">Einkaufsliste</h1>
-        <span className="rounded-lg bg-card px-2.5 py-1 text-sm text-muted">{data.week}</span>
         {data.template && (
           <span className="rounded-lg bg-card px-2.5 py-1 text-sm text-muted" title="Nur dieses Template — wechseln im Wochenplan">
             Template {data.template}
@@ -90,6 +107,11 @@ export default function ListClient() {
           </Link>
         )}
         <span className="flex-1" />
+        {data.checkedCount > 0 && (
+          <button onClick={resetChecks} className="rounded-lg bg-card px-3 py-1.5 text-sm text-muted hover:text-foreground">
+            Haken zurücksetzen
+          </button>
+        )}
         {(data.groups.length > 0 || data.checkedCount > 0) && (
           <button onClick={load} className="rounded-lg bg-card px-3 py-1.5 text-sm text-muted hover:text-foreground">
             Neu laden
@@ -110,12 +132,12 @@ export default function ListClient() {
           </div>
           <ul className="divide-y divide-line">
             {g.items.map((it) => (
-              <li key={it.id} className="flex items-center gap-3 px-4 py-2">
+              <li key={it.ingredient_id} className="flex items-center gap-3 px-4 py-2">
                 <input
                   type="checkbox"
                   checked={it.checked}
                   onChange={() => toggle(it)}
-                  className="h-4 w-4 accent-[var(--accent)]"
+                  className="h-5 w-5 shrink-0 accent-[var(--accent)]"
                 />
                 {it.rewe?.image ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -145,8 +167,10 @@ export default function ListClient() {
                     </a>
                   )}
                 </span>
-                <span className="shrink-0 text-sm text-muted">
-                  {Number(it.qty).toLocaleString("de-DE")} {it.unit || ""}
+                <span className="shrink-0 text-right text-sm text-muted">
+                  {it.amounts
+                    .map((a) => fmtQty(a.qty != null && isCountable(a.unit) ? Math.ceil(a.qty - 1e-9) : a.qty, a.unit))
+                    .join(" + ")}
                 </span>
                 {it.rewe?.priceCents != null && (
                   <span className="shrink-0 text-right text-sm font-medium tabular-nums">

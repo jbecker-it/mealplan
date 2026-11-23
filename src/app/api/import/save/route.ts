@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ParsedRecipe } from "@/lib/parser";
 import { requireAuth } from "@/lib/auth";
+import { upsertIngredient, upsertTag } from "@/lib/ingredients";
+import { normalizeAmount } from "@/lib/units";
 
 export async function POST(req: NextRequest) {
   const denied = await requireAuth();
@@ -28,14 +30,26 @@ export interface SaveIngredient {
   newName?: string;
 }
 
-// Grobe REWE-Gruppierung für neue Zutaten (kann später in der UI geändert werden)
-function guessCategory(name: string): string {
+// Grobe REWE-Abteilung für neue Zutaten (in „Zutaten“ jederzeit änderbar)
+export function guessCategory(name: string): string {
   const n = name.toLowerCase();
-  if (/(möhre|karotte|brokkoli|blumenkohl|gurke|tomate|paprika|kartoffel|sellerie|banane|basilikum|spinat|zucchini|zwiebel|lauch|kohl|fenchel|petersilie|ingwer|rucola|salat|apfel|birne|orange|zitrone|ananas|erdbeere|beere|kirsche|pfirsich|aprikose|melone)/.test(n))
+  if (/(öl|essig|soße|sauce|paste|senf|ketchup|gewürz|salz|pfeffer|curry|paprikapulver|zimt|kreuzkümmel|tahini|hefeflocken|brühe)/.test(n))
+    return "Öle, Soßen & Gewürze";
+  if (/(möhre|karotte|brokkoli|blumenkohl|gurke|tomate|paprika|kartoffel|sellerie|banane|basilikum|spinat|zucchini|zwiebel|knoblauch|lauch|kohl|fenchel|petersilie|koriander|ingwer|rucola|salat|apfel|birne|orange|zitrone|limette|ananas|erdbeere|beere|kirsche|pfirsich|aprikose|melone|avocado|pilz|champignon|aubergine|kürbis|süßkartoffel)/.test(n))
     return "Obst & Gemüse";
-  if (/(drink|milch|joghurt|quark|tofu|tempeh|soj|seitan|hack|käse|yoghurt|sahne|tahini|paste|soße|sauce|dip|edamame|falafel)/.test(n))
-    return "Kühlregal";
-  return "Trockenwaren";
+  if (/(tofu|tempeh|seitan|hack|wurst|fleisch|fisch|lachs|hähnchen|pute)/.test(n)) return "Fleisch, Wurst & Fisch";
+  if (/(drink|milch|joghurt|yoghurt|quark|skyr|käse|sahne|butter|margarine|\bei\b|eier)/.test(n)) return "Käse, Eier & Molkerei";
+  if (/(tiefkühl|tk-|edamame|erbsen tk)/.test(n)) return "Tiefkühlkost";
+  if (/(dose|konserve|kokosmilch|passiert|falafel|bohnen|kichererbsen)/.test(n)) return "Fertiggerichte & Konserven";
+  if (/(brot|brötchen|wrap|tortilla|haferflocken|müsli|cornflakes|aufstrich|sirup|marmelade)/.test(n))
+    return "Backwaren, Cerealien & Aufstriche";
+  return "Kochen & Backen";
+}
+
+// Standard-Einheit einer NEUEN Zutat aus ihrer ersten Verwendung ableiten
+function defaultUnitFor(unit?: string): string {
+  if (!unit || unit === "EL" || unit === "TL" || unit === "Prise") return "g";
+  return unit;
 }
 
 export async function saveParsed(
@@ -44,26 +58,10 @@ export async function saveParsed(
 ): Promise<{ saved: string[]; created: string[] }> {
   const created: string[] = [];
   const saved: string[] = [];
-  const upsertIng = (name: string, category?: string): number => {
-    const n = name.trim();
-    const row = db.prepare("SELECT id FROM ingredient WHERE name = ?").get(n) as
-      | { id: number }
-      | undefined;
-    if (row) return Number(row.id);
-    const info = db
-      .prepare("INSERT INTO ingredient(name, category, unit_default) VALUES (?,?,?)")
-      .run(n, category || guessCategory(n), "g");
-    created.push(n);
-    return Number(info.lastInsertRowid);
-  };
-  const upsertTag = (name: string): number => {
-    const n = name.trim();
-    const row = db.prepare("SELECT id FROM tag WHERE name = ?").get(n) as
-      | { id: number }
-      | undefined;
-    if (row) return Number(row.id);
-    const info = db.prepare("INSERT INTO tag(name) VALUES (?)").run(n);
-    return Number(info.lastInsertRowid);
+  const upsertIng = (name: string, category?: string, unit?: string): number => {
+    const r = upsertIngredient(name, category || guessCategory(name), defaultUnitFor(unit));
+    if (r.created) created.push(name.trim());
+    return r.id;
   };
 
   for (const rec of preview) {
@@ -101,11 +99,12 @@ export async function saveParsed(
             "category" in ing && (ing as SaveIngredient).category
               ? (ing as SaveIngredient).category
               : undefined;
-          ingId = upsertIng(finalName, cat);
+          ingId = upsertIng(finalName, cat, ing.unit);
         }
+        const na = normalizeAmount(ing.amount, ing.unit);
         db.prepare(
           "INSERT INTO recipe_ingredient(recipe_id, ingredient_id, amount, unit, note, sort) VALUES (?,?,?,?,?,?)"
-        ).run(rid, ingId, ing.amount ?? null, ing.unit || null, null, i);
+        ).run(rid, ingId, na.amount, na.unit || null, null, i);
       });
       rec.steps.forEach((s, i) =>
         db.prepare("INSERT INTO step(recipe_id, text, sort) VALUES (?,?,?)").run(rid, s, i)

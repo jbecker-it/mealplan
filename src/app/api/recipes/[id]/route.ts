@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
+import { upsertIngredient, upsertTag } from "@/lib/ingredients";
+import { normalizeAmount, parseAmount } from "@/lib/units";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -18,7 +20,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   const ings = db
     .prepare(
-      `SELECT ri.id, ri.amount, ri.unit, ri.note, ri.sort, i.id AS ingredient_id, i.name, i.category
+      `SELECT ri.id, ri.amount, ri.unit, ri.note, ri.sort, i.id AS ingredient_id, i.name, i.category,
+              i.unit_default, i.per_el
        FROM recipe_ingredient ri JOIN ingredient i ON i.id = ri.ingredient_id
        WHERE ri.recipe_id = ? ORDER BY ri.sort`
     )
@@ -47,89 +50,73 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (denied) return denied;
   const { id } = await params;
   const body = await readJson(req);
-  if (body === null) return badJson;
+  if (body === null) return badJson();
   const rid = Number(id);
+  if (!db.prepare("SELECT 1 FROM recipe WHERE id = ?").get(rid))
+    return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
+  if (body.title !== undefined && !String(body.title).trim())
+    return NextResponse.json({ error: "Titel fehlt" }, { status: 400 });
 
-  if (body.slots !== undefined) {
-    const arr = Array.isArray(body.slots) ? (body.slots as string[]) : String(body.slots).split(",");
-    const cleaned = arr.map((s) => String(s).trim()).filter((s) => ["B", "M", "A", "S"].includes(s));
-    db.prepare("UPDATE recipe SET slots = ? WHERE id = ?").run(
-      (cleaned.length ? cleaned : ["B", "M", "A", "S"]).join(","),
-      rid
-    );
-  }
-  const fields: string[] = [];
-  const vals: Array<string | number | null> = [];
-  for (const k of [
-    "title",
-    "description",
-    "kcal",
-    "protein_g",
-    "carbs_g",
-    "fat_g",
-    "sugar_g",
-    "salt_g",
-    "favorite",
-    "archived",
-  ] as const) {
-    if (body[k] !== undefined) {
-      fields.push(`${k} = ?`);
-      vals.push(
-        k === "favorite" || k === "archived"
-          ? (body[k] ? 1 : 0)
-          : (body[k] as string | number | null)
+  db.transaction(() => {
+    if (body.slots !== undefined) {
+      const arr = Array.isArray(body.slots) ? (body.slots as string[]) : String(body.slots).split(",");
+      const cleaned = arr.map((s) => String(s).trim()).filter((s) => ["B", "M", "A", "S"].includes(s));
+      db.prepare("UPDATE recipe SET slots = ? WHERE id = ?").run(
+        (cleaned.length ? cleaned : ["B", "M", "A", "S"]).join(","),
+        rid
       );
     }
-  }
-  if (fields.length) {
-    vals.push(rid);
-    db.prepare(`UPDATE recipe SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
-  }
+    const fields: string[] = [];
+    const vals: Array<string | number | null> = [];
+    for (const k of ["title", "description"] as const) {
+      if (body[k] !== undefined) {
+        fields.push(`${k} = ?`);
+        vals.push(body[k] == null ? null : String(body[k]).trim());
+      }
+    }
+    for (const k of ["kcal", "protein_g", "carbs_g", "fat_g", "sugar_g", "salt_g"] as const) {
+      if (body[k] !== undefined) {
+        fields.push(`${k} = ?`);
+        vals.push(parseAmount(body[k] as string | number | null));
+      }
+    }
+    for (const k of ["favorite", "archived"] as const) {
+      if (body[k] !== undefined) {
+        fields.push(`${k} = ?`);
+        vals.push(body[k] ? 1 : 0);
+      }
+    }
+    if (fields.length) {
+      vals.push(rid);
+      db.prepare(`UPDATE recipe SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+    }
 
-  if (body.ingredients) {
-    const upsertIng = (name: string): number => {
-      const n = name.trim();
-      const row = db.prepare("SELECT id FROM ingredient WHERE name = ?").get(n) as
-        | { id: number }
-        | undefined;
-      if (row) return Number(row.id);
-      const info = db
-        .prepare("INSERT INTO ingredient(name, category, unit_default) VALUES (?,?,?)")
-        .run(n, "Trockenwaren", "g");
-      return Number(info.lastInsertRowid);
-    };
-    db.prepare("DELETE FROM recipe_ingredient WHERE recipe_id = ?").run(rid);
-    (body.ingredients as Array<{ name?: string; id?: number; amount?: number; unit?: string; note?: string }>)
-      .filter((x) => x.name?.trim() || x.id != null)
-      .forEach((x, i) => {
-        const ingId = x.id ?? upsertIng(x.name!);
-        db.prepare(
-          "INSERT INTO recipe_ingredient(recipe_id, ingredient_id, amount, unit, note, sort) VALUES (?,?,?,?,?,?)"
-        ).run(rid, ingId, x.amount ?? null, x.unit || null, x.note || null, i);
+    if (Array.isArray(body.ingredients)) {
+      db.prepare("DELETE FROM recipe_ingredient WHERE recipe_id = ?").run(rid);
+      (body.ingredients as Array<{ name?: string; id?: number; amount?: number | string; unit?: string; note?: string }>)
+        .filter((x) => x.name?.trim() || x.id != null)
+        .forEach((x, i) => {
+          const ingId = x.id ?? upsertIngredient(x.name!).id;
+          const na = normalizeAmount(parseAmount(x.amount ?? null), x.unit);
+          db.prepare(
+            "INSERT INTO recipe_ingredient(recipe_id, ingredient_id, amount, unit, note, sort) VALUES (?,?,?,?,?,?)"
+          ).run(rid, ingId, na.amount, na.unit || null, x.note || null, i);
+        });
+    }
+    if (Array.isArray(body.steps)) {
+      db.prepare("DELETE FROM step WHERE recipe_id = ?").run(rid);
+      (body.steps as string[]).forEach((s, i) => {
+        if (String(s).trim())
+          db.prepare("INSERT INTO step(recipe_id, text, sort) VALUES (?,?,?)").run(rid, String(s).trim(), i);
       });
-  }
-  if (body.steps) {
-    db.prepare("DELETE FROM step WHERE recipe_id = ?").run(rid);
-    (body.steps as string[]).forEach((s, i) => {
-      if (s.trim())
-        db.prepare("INSERT INTO step(recipe_id, text, sort) VALUES (?,?,?)").run(rid, s.trim(), i);
-    });
-  }
-  if (body.tags) {
-    const upsertTag = (name: string): number => {
-      const n = name.trim();
-      const row = db.prepare("SELECT id FROM tag WHERE name = ?").get(n) as
-        | { id: number }
-        | undefined;
-      if (row) return Number(row.id);
-      const info = db.prepare("INSERT INTO tag(name) VALUES (?)").run(n);
-      return Number(info.lastInsertRowid);
-    };
-    db.prepare("DELETE FROM recipe_tag WHERE recipe_id = ?").run(rid);
-    for (const t of body.tags as string[])
-      if (t.trim())
-        db.prepare("INSERT OR IGNORE INTO recipe_tag(recipe_id, tag_id) VALUES (?,?)").run(rid, upsertTag(t));
-  }
+    }
+    if (Array.isArray(body.tags)) {
+      db.prepare("DELETE FROM recipe_tag WHERE recipe_id = ?").run(rid);
+      for (const t of body.tags as string[])
+        if (String(t).trim())
+          db.prepare("INSERT OR IGNORE INTO recipe_tag(recipe_id, tag_id) VALUES (?,?)").run(rid, upsertTag(String(t)));
+    }
+  })();
   return NextResponse.json({ ok: true });
 }
 

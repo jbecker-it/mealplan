@@ -7,7 +7,7 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const { ingredient_id, name } = raw as { ingredient_id?: number; name?: string };
   if (!ingredient_id || !name?.trim())
     return NextResponse.json(
@@ -43,7 +43,7 @@ export async function DELETE(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const { name } = raw as { name?: string };
   if (!name?.trim())
     return NextResponse.json({ error: "name fehlt" }, { status: 400 });

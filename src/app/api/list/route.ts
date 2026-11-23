@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { currentWeekKey } from "@/lib/week";
-import { getActiveTemplate } from "@/lib/db";
+import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 import { grammageToGrams, reweUrl } from "@/lib/rewe";
+import { PLAN_KEY } from "@/lib/plan";
+import { roundAmount, toBaseUnit } from "@/lib/units";
 
 // Basis-Kategorien in fester Reihenfolge; weitere benutzerdefinierte
 // Kategorien (z. B. „Trockenwaren“ oder eigene) kommen alphabetisch danach.
@@ -16,81 +16,65 @@ function orderCategories(cats: Set<string>): string[] {
   return [...base, ...rest];
 }
 
+// Abhak-Status gehört zum Template (A/B), nicht mehr zur Kalenderwoche.
+const checkKey = (tpl: string) => `${PLAN_KEY}-${tpl}`;
+
 export async function GET(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
-  const week = req.nextUrl.searchParams.get("week") || currentWeekKey();
-  // Nur das ausgewählte Template gehört auf die Einkaufsliste (2026-11-19):
+  // Nur das ausgewählte Template gehört auf die Einkaufsliste:
   // ?template=A|B überschreibt, sonst gilt settings.active_template.
   const tplParam = req.nextUrl.searchParams.get("template");
-  const template =
-    tplParam === "A" || tplParam === "B" ? tplParam : getActiveTemplate();
+  const template = tplParam === "A" || tplParam === "B" ? tplParam : getActiveTemplate();
+  // Bedarf für N Tage (Standard 7 = eine Woche)
+  const days = Math.min(7, Math.max(1, Number(req.nextUrl.searchParams.get("days")) || 7));
 
+  // Eine Zeile je Rezept-Zutat × Plan-Mahlzeit (Mengen im Rezept = 1 Portion)
   const rows = db
     .prepare(
-      `SELECT i.id, i.name, i.category, i.unit_default, LOWER(rri.unit) AS unit,
-              ROUND(SUM(rri.amount * pm.servings), 2) AS qty,
-              GROUP_CONCAT(DISTINCT rm.title) AS used_in,
+      `SELECT i.id, i.name, i.category, i.unit_default, i.per_el,
+              ri.amount, ri.unit, pm.servings, rm.title,
               rp.product_id AS rewe_id, rp.title AS rewe_title,
               rp.image_url AS rewe_image, rp.price_cents AS rewe_price,
               rp.is_vegan AS rewe_vegan, rp.grammage AS rewe_grammage,
               rp.brand AS rewe_brand
        FROM plan_meal pm
-       JOIN recipe_ingredient rri ON rri.recipe_id = pm.recipe_id
-       JOIN ingredient i ON i.id = rri.ingredient_id
+       JOIN recipe_ingredient ri ON ri.recipe_id = pm.recipe_id
+       JOIN ingredient i ON i.id = ri.ingredient_id
        JOIN recipe rm ON rm.id = pm.recipe_id
        LEFT JOIN rewe_product rp ON rp.product_id = i.rewe_product_id
-       WHERE pm.week_key = ? AND pm.template_id = ?
-       GROUP BY i.id, LOWER(rri.unit)
-       ORDER BY i.category, i.name COLLATE NOCASE`
+       WHERE pm.week_key = ? AND pm.template_id = ? AND pm.day < ?`
     )
-    // Nur das ausgewählte Template zählt — sonst würde die Einkaufsliste
-    // A + B doppelt befüllen.
-    .all(week, template) as Array<Record<string, unknown>>;
+    .all(PLAN_KEY, template, days) as Array<Record<string, unknown>>;
 
-  // Küchen-Einheiten auf die Einheiten der Zutat-Entität normieren
-  // (z. B. "1 EL Sojasoße" + "150 ml Sojasoße" → eine Zeile in ml)
-  const LADLE_TO_ML: Record<string, number> = {
-    el: 15, essenlöffel: 15, löffel: 15, tl: 5, teelöffel: 5,
+  type Part = { unit: string; qty: number; usedIn: Set<string>; noAmount: boolean };
+  type Entry = {
+    id: number;
+    name: string;
+    category: string;
+    unitDefault: string;
+    rewe: {
+      id: string;
+      title: string;
+      image: string | null;
+      priceCents: number | null;
+      vegan: boolean;
+      grammage: string | null;
+      brand: string | null;
+    } | null;
+    parts: Part[];
   };
-  const displayUnit = (u: string) => {
-    if (u === "el" || u === "essenlöffel" || u === "löffel") return "EL";
-    if (u === "tl" || u === "teelöffel") return "TL";
-    return u === "g" || u === "ml" ? u : u.charAt(0).toUpperCase() + u.slice(1);
-  };
-
-  type Part = { unit: string; qty: number; usedIn: string[] };
-  const byIng = new Map<
-    number,
-    {
-      id: number;
-      name: string;
-      category: string;
-      unitDefault: string;
-      rewe: {
-        id: string;
-        title: string;
-        image: string | null;
-        priceCents: number | null;
-        vegan: boolean;
-        grammage: string | null;
-        brand: string | null;
-      } | null;
-      parts: Part[];
-    }
-  >();
+  const byIng = new Map<number, Entry>();
   for (const r of rows) {
     const id = Number(r.id);
-    const unit = String(r.unit || "g");
-    const qty = Number(r.qty || 0);
-    const usedIn = String(r.used_in || "").split("|").map((s) => s.trim()).filter(Boolean);
-    const e =
-      byIng.get(id) ??
-      {
+    const unitDefault = String(r.unit_default || "g");
+    let e = byIng.get(id);
+    if (!e) {
+      e = {
         id,
         name: String(r.name),
-        category: String(r.category),
-        unitDefault: String(r.unit_default || "g").toLowerCase(),
+        category: String(r.category || "Sonstige"),
+        unitDefault,
         rewe: r.rewe_id
           ? {
               id: String(r.rewe_id),
@@ -104,117 +88,97 @@ export async function GET(req: NextRequest) {
           : null,
         parts: [],
       };
-    let outUnit = unit;
-    let outQty = qty;
-    const factor = LADLE_TO_ML[unit];
-    if (factor && e.unitDefault === "ml") {
-      outUnit = "ml";
-      outQty = qty * factor;
+      byIng.set(id, e);
     }
-    const part = e.parts.find((p) => p.unit === outUnit);
-    if (part) {
-      part.qty += outQty;
-      part.usedIn.push(...usedIn);
-    } else {
-      e.parts.push({ unit: outUnit, qty: outQty, usedIn });
+    const servings = Number(r.servings) || 0;
+    const noAmount = r.amount == null;
+    const base = noAmount
+      ? { amount: 0, unit: String(r.unit || unitDefault) }
+      : toBaseUnit(Number(r.amount) * servings, String(r.unit || unitDefault), unitDefault, r.per_el as number | null);
+    let part = e.parts.find((p) => p.unit === base.unit);
+    if (!part) {
+      part = { unit: base.unit, qty: 0, usedIn: new Set(), noAmount: true };
+      e.parts.push(part);
     }
-    byIng.set(id, e);
+    part.qty += base.amount;
+    if (!noAmount) part.noAmount = false;
+    part.usedIn.add(String(r.title));
   }
 
   // REWE-Kosten pro Zutat: benötigte g/ml → ganze Packs → Preis × Packs.
-  // Nur für g/ml-Positionen (EL/TL/„Stück“ ohne Packgröße bleiben ohne Preis).
-  function reweCost(
-    e: {
-      unitDefault: string;
-      rewe: { priceCents: number | null; grammage: string | null } | null;
-      parts: Part[];
-    }
-  ): { packs: number; costCents: number } | null {
+  // Nur Mengen in der Basiseinheit der Zutat (g/ml) zählen.
+  function reweCost(e: Entry): { packs: number; costCents: number } | null {
     if (!e.rewe || e.rewe.priceCents == null) return null;
     const packG = grammageToGrams(e.rewe.grammage);
     if (!packG) return null;
-    let neededG = 0;
-    for (const p of e.parts) {
-      if (p.unit === "g" || p.unit === "ml" || e.unitDefault === "g" || e.unitDefault === "ml")
-        neededG += p.qty;
-    }
-    if (neededG <= 0) return null;
-    const packs = Math.max(1, Math.ceil(neededG / packG - 1e-9));
+    let needed = 0;
+    for (const p of e.parts) if (p.unit === "g" || p.unit === "ml") needed += p.qty;
+    if (needed <= 0) return null;
+    const packs = Math.max(1, Math.ceil(needed / packG - 1e-9));
     return { packs, costCents: packs * e.rewe.priceCents };
   }
 
-  const flat = [...byIng.values()].flatMap((e, idx) =>
-    e.parts.map((p) => {
-      const cost = reweCost(e);
-      return {
-        id: idx,
-        name: e.name,
-        category: e.category,
-        unit: displayUnit(p.unit),
-        qty: Math.round(p.qty * 100) / 100,
-        used_in: [...new Set(p.usedIn)].join(", "),
-        ingredient_id: e.id,
-        rewe: e.rewe
-          ? {
-              productId: e.rewe.id,
-              title: e.rewe.title,
-              image: e.rewe.image,
-              priceCents: e.rewe.priceCents,
-              vegan: e.rewe.vegan,
-              grammage: e.rewe.grammage,
-              brand: e.rewe.brand,
-              url: reweUrl(e.rewe.title),
-              packs: cost?.packs ?? null,
-              costCents: cost?.costCents ?? null,
-            }
-          : null,
-      };
-    })
+  const checkedSet = new Set(
+    (
+      db.prepare("SELECT ingredient_id FROM check_state WHERE week_key = ?").all(checkKey(template)) as Array<{
+        ingredient_id: number;
+      }>
+    ).map((c) => Number(c.ingredient_id))
   );
-
-  const checked = db
-    .prepare("SELECT ingredient_id FROM check_state WHERE week_key = ?")
-    .all(week) as Array<{ ingredient_id: number }>;
-  const checkedSet = new Set(checked.map((c) => c.ingredient_id));
 
   const groups: Record<string, Array<Record<string, unknown>>> = {};
   const cats = new Set<string>();
-  for (const r of flat) {
-    const cat = String(r.category) || "Sonstige";
+  let reweTotalCents = 0;
+  let reweMappedCount = 0;
+  let reweUnmappedCount = 0;
+  const entries = [...byIng.values()].sort((a, b) => a.name.localeCompare(b.name, "de"));
+  for (const e of entries) {
+    const cost = reweCost(e);
+    if (e.rewe) {
+      reweMappedCount++;
+      if (cost) reweTotalCents += cost.costCents;
+    } else reweUnmappedCount++;
+    // Basiseinheit zuerst, dann übrige Einheiten (z. B. „2 EL“ ohne Umrechnung)
+    const parts = [...e.parts].sort((a, b) => Number(b.unit === e.unitDefault) - Number(a.unit === e.unitDefault));
+    const cat = e.category || "Sonstige";
     cats.add(cat);
-    (groups[cat] ||= []).push({ ...r, checked: checkedSet.has(Number(r.ingredient_id)) });
+    (groups[cat] ||= []).push({
+      id: e.id,
+      ingredient_id: e.id,
+      name: e.name,
+      category: cat,
+      amounts: parts.map((p) => ({
+        qty: p.noAmount ? null : roundAmount(p.qty, p.unit),
+        unit: p.unit,
+      })),
+      used_in: [...new Set(parts.flatMap((p) => [...p.usedIn]))].join(", "),
+      checked: checkedSet.has(e.id),
+      rewe: e.rewe
+        ? {
+            productId: e.rewe.id,
+            title: e.rewe.title,
+            image: e.rewe.image,
+            priceCents: e.rewe.priceCents,
+            vegan: e.rewe.vegan,
+            grammage: e.rewe.grammage,
+            brand: e.rewe.brand,
+            url: reweUrl(e.rewe.title),
+            packs: cost?.packs ?? null,
+            costCents: cost?.costCents ?? null,
+          }
+        : null,
+    });
   }
   const ordered = orderCategories(cats)
     .filter((c) => groups[c])
     .map((c) => ({ category: c, items: groups[c] }));
 
-  // REWE-Gesamtkosten: pro Zutat einmal (Kosten hängen von der Zutat ab,
-  // nicht von der Position) — über ingredient_id dedupliziert.
-  const seenIng = new Set<number>();
-  let reweTotalCents = 0;
-  let reweMappedCount = 0;
-  let reweUnmappedCount = 0;
-  for (const r of flat) {
-    const iid = Number(r.ingredient_id);
-    if (seenIng.has(iid)) continue;
-    seenIng.add(iid);
-    const rw = r.rewe as
-      | { costCents: number | null }
-      | null;
-    if (rw) {
-      reweMappedCount++;
-      if (rw.costCents != null) reweTotalCents += rw.costCents;
-    } else {
-      reweUnmappedCount++;
-    }
-  }
-
   return NextResponse.json({
-    week,
     template,
+    days,
     groups: ordered,
-    total: flat.length,
-    checkedCount: flat.filter((r) => checkedSet.has(Number(r.ingredient_id))).length,
+    total: entries.length,
+    checkedCount: entries.filter((e) => checkedSet.has(e.id)).length,
     rewe: {
       totalCents: reweTotalCents,
       mappedCount: reweMappedCount,
@@ -223,26 +187,32 @@ export async function GET(req: NextRequest) {
   });
 }
 
+// Abhaken: { ingredientId, checked, template? } · Alle zurücksetzen: { reset: true, template? }
 export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
   const raw = await readJson(req);
-  if (raw === null) return badJson;
-  const { week, ingredientId, checked } = raw as {
-    week: string;
-    ingredientId: number;
-    checked: boolean;
+  if (raw === null) return badJson();
+  const { ingredientId, checked, reset, template } = raw as {
+    ingredientId?: number;
+    checked?: boolean;
+    reset?: boolean;
+    template?: string;
   };
-  if (!week || !ingredientId)
-    return NextResponse.json({ error: "Felder fehlen" }, { status: 400 });
+  const tpl = template === "A" || template === "B" ? template : getActiveTemplate();
+  const key = checkKey(tpl);
+  if (reset) {
+    db.prepare("DELETE FROM check_state WHERE week_key = ?").run(key);
+    return NextResponse.json({ ok: true });
+  }
+  if (!ingredientId)
+    return NextResponse.json({ error: "ingredientId fehlt" }, { status: 400 });
   if (checked)
     db.prepare(
       `INSERT INTO check_state(week_key, ingredient_id, checked_at) VALUES (?,?,datetime('now'))
        ON CONFLICT(week_key, ingredient_id) DO UPDATE SET checked_at = datetime('now')`
-    ).run(week, ingredientId);
+    ).run(key, ingredientId);
   else
-    db.prepare("DELETE FROM check_state WHERE week_key = ? AND ingredient_id = ?").run(
-      week, ingredientId
-    );
+    db.prepare("DELETE FROM check_state WHERE week_key = ? AND ingredient_id = ?").run(key, ingredientId);
   return NextResponse.json({ ok: true });
 }

@@ -46,8 +46,16 @@ cd mealplan && git pull && bash install.sh
 - **Rezepte** per Text-Import (Makros, Zutaten, Zubereitung) oder
   manuell — mit Tags, Favoriten und **Kategorien**
   (Frühstück / Mittag / Abend / Snack — je Rezept wählbar, Default: alle)
-- **Wochenplan 2×2**: Template A und B je 7 Tage, jede zweite Woche
-  rotierend — gleiche Rezepte an jedem Wochentag, zwei Varianten
+- **Wochenplan 2×2**: Template A und B, dauerhaft (unabhängig von der
+  Kalenderwoche) — gleiche Rezepte an jedem Wochentag, frei umschaltbar.
+  „Neu generieren“ betrifft nur das aktive Template; vorher wird der alte
+  Stand im **Verlauf** gesichert und ist als A oder B wiederherstellbar
+- **Kochmodus**: Rezept auf beliebig viele Portionen hochrechnen
+  (Mengen im Rezept = 1 Portion), Zutaten/Schritte abhaken
+- **Tags**: direkt im Rezept vergeben, in der Rezeptliste filtern,
+  pro Profil ein-/ausschließen
+- **Einheiten**: g, ml, EL, TL, Stück, Prise, Bund, Zehe … — EL/TL werden
+  auf der Einkaufsliste pro Zutat in g/ml umgerechnet („1 EL = x g“)
 - Pro Slot wählbar: **gemeinsam** (eine Portion geteilt) oder
   **getrennt** (jeder eigene Rezeptvorschlag)
 - Portionsgrößen: 0.5 / 1 / 1.5 — keine freie Skalierung
@@ -65,6 +73,8 @@ Tags: schnell, vegan
 Zutaten:
 - 200 g Reis
 - 400 g Kokosmilch
+- 1 1/2 EL Sojasoße       ← Brüche, ½, 1,5, kg/l werden umgerechnet
+- 2 Zwiebeln              ← ohne Einheit = Stück
 Zubereitung:
 1. Reis kochen.
 2. Curry anrühren.

@@ -1,5 +1,6 @@
 // Import-Parser: Textformat → Preview mit Entity-Matching (grün/gelb/rot)
 import { db } from "./db";
+import { UNIT_PATTERN, normalizeAmount, parseAmount } from "./units";
 
 export interface ParsedIngredient {
   raw: string;
@@ -59,9 +60,13 @@ function levenshtein(a: string, b: string): number {
   return dp[n];
 }
 
-const UNITS = "g|kg|mg|ml|l|stück|stk|el|tl|block|scheibe|prise|bunde|bund";
-const AMT_RE = new RegExp(`^(\\d+[.,]?\\d*)\\s*(${UNITS})\\s+(.+)$`, "i");
-const FRAC_RE = new RegExp(`^([½¼¾])\\s*(${UNITS})\\s+(.+)$`, "i");
+// Menge: 1 | 1,5 | 1.5 | 1/2 | 1 1/2 | ½ | 1½ | 1-2 (Bereich → oberer Wert)
+const AMT = "(\\d+(?:[.,]\\d+)?(?:\\s+\\d+/\\d+)?(?:/\\d+)?\\s*[½¼¾⅓⅔⅛]?|[½¼¾⅓⅔⅛])";
+const AMT_UNIT_RE = new RegExp(
+  `^${AMT}(?:\\s*[-–]\\s*${AMT})?\\s*(${UNIT_PATTERN})\\.?(?=\\s|$)\\s*(.*)$`,
+  "i"
+);
+const AMT_ONLY_RE = new RegExp(`^${AMT}(?:\\s*[-–]\\s*${AMT})?\\s+(.+)$`, "i");
 
 function parseIngLine(line: string): ParsedIngredient {
   const raw = line.trim();
@@ -69,59 +74,63 @@ function parseIngLine(line: string): ParsedIngredient {
   let unit: string | undefined;
   let rest = raw;
 
-  const m = AMT_RE.exec(raw) || FRAC_RE.exec(raw);
-  if (m) {
-    if (m[1] === "½") amount = 0.5;
-    else if (m[1] === "¼") amount = 0.25;
-    else if (m[1] === "¾") amount = 0.75;
-    else amount = parseFloat(m[1].replace(",", "."));
-    unit = m[2].toLowerCase();
-    if (unit === "l") unit = "ml";
-    if (unit === "bunde") unit = "Bund";
-    else if (unit === "stück" || unit === "stk") unit = "Stück";
-    else if (unit === "scheibe") unit = "Scheibe";
-    else if (unit === "block") unit = "Block";
-    rest = m[3];
+  const mu = AMT_UNIT_RE.exec(raw);
+  const mo = mu ? null : AMT_ONLY_RE.exec(raw);
+  if (mu && mu[4].trim()) {
+    const a = parseAmount(mu[2] ?? mu[1]);
+    const n = normalizeAmount(a, mu[3]);
+    amount = n.amount ?? undefined;
+    unit = n.unit;
+    rest = mu[4];
+  } else if (mo) {
+    // „2 Zwiebeln“ → 2 Stück
+    const a = parseAmount(mo[2] ?? mo[1]);
+    if (a != null) {
+      amount = a;
+      unit = "Stück";
+      rest = mo[3];
+    }
   }
+  rest = rest.replace(/^(?:von\s+)/i, "");
 
   const name = rest.replace(/\s*\(.*\)$/, "").trim();
   const ing: ParsedIngredient = { raw, amount, unit, name: name || raw, match: "new" };
 
   const n = norm(name);
-  const ex = db
-    .prepare("SELECT id, name FROM ingredient WHERE name = ?")
-    .get(n) as { id: number; name: string } | undefined;
+  const lc = (x: string) => x.toLocaleLowerCase("de-DE");
+  // Exakt (Unicode-sicher ohne Groß/Klein — SQLite-NOCASE kennt kein Ä/Ö/Ü)
+  const all = db.prepare("SELECT id, name FROM ingredient").all() as Array<{ id: number; name: string }>;
+  const ex = all.find((e) => lc(e.name) === lc(name.trim()) || norm(e.name) === n);
   if (ex) {
     ing.match = "existing";
     ing.matchedId = ex.id;
     return ing;
   }
-  const al = db
-    .prepare(
-      "SELECT i.id, i.name FROM alias a JOIN ingredient i ON i.id = a.ingredient_id WHERE a.from_name = ?"
-    )
-    .get(n) as { id: number; name: string } | undefined;
+  const aliases = db
+    .prepare("SELECT a.from_name, i.id, i.name FROM alias a JOIN ingredient i ON i.id = a.ingredient_id")
+    .all() as Array<{ from_name: string; id: number; name: string }>;
+  const al = aliases.find((a) => norm(a.from_name) === n);
   if (al) {
     ing.match = "alias";
     ing.matchedId = al.id;
     return ing;
   }
-  // Fuzzy: Abstand ≤ 3 oder Teilstring (≥ 5 Zeichen)
-  const all = db.prepare("SELECT id, name FROM ingredient").all() as Array<{
-    id: number;
-    name: string;
-  }>;
+  // Fuzzy: kleiner Tippfehler-Abstand (abhängig von der Wortlänge) oder
+  // Teilstring (z. B. „Räuchertofu“ ↔ „Tofu“) → Vorschlag zum Bestätigen
+  const maxD = n.length <= 4 ? 1 : n.length <= 8 ? 2 : 3;
   let best: { id: number; name: string } | undefined;
-  let bestD = 4;
-  for (const e of all) {
-    const d = levenshtein(n, norm(e.name));
-    if (d < bestD || (bestD === 4 && n.length >= 5 && norm(e.name).includes(n) && n.length >= 4)) {
-      if (d < bestD) {
-        bestD = d;
-        best = e;
-      }
+  let bestD = Infinity;
+  const consider = (cand: string, target: { id: number; name: string }) => {
+    const c = norm(cand);
+    let d = levenshtein(n, c);
+    if (d > maxD && n.length >= 4 && c.length >= 4 && (c.includes(n) || n.includes(c))) d = maxD + 0.5;
+    if (d <= maxD + 0.5 && d < bestD) {
+      bestD = d;
+      best = { id: target.id, name: target.name };
     }
-  }
+  };
+  for (const e of all) consider(e.name, e);
+  for (const a of aliases) consider(a.from_name, a);
   if (best) {
     ing.match = "fuzzy";
     ing.suggestion = best;

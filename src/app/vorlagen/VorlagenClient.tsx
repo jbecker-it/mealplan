@@ -1,6 +1,5 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { currentWeekKey } from "@/lib/week";
 
 const SLOT_NAMES: Record<string, string> = {
   B: "Frühstück",
@@ -31,7 +30,6 @@ export default function VorlagenClient() {
   const [applyTpl, setApplyTpl] = useState<"A" | "B">("A");
   const [editing, setEditing] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
-  const curWeek = currentWeekKey();
 
   const load = useCallback(async () => {
     const r = await fetch("/api/templates", { cache: "no-store" });
@@ -46,7 +44,7 @@ export default function VorlagenClient() {
   const apply = async (v: Vorlage) => {
     if (
       !confirm(
-        `Vorlage „${v.name}“ in Woche ${curWeek} als Template ${applyTpl} einplanen? Das überschreibt den dortigen Plan (alle 7 Tage).`
+        `Vorlage „${v.name}“ als Template ${applyTpl} einplanen? Der aktuelle Stand von ${applyTpl} wird vorher im Verlauf gesichert.`
       )
     )
       return;
@@ -54,7 +52,7 @@ export default function VorlagenClient() {
     const r = await fetch("/api/templates/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template_id: v.id, week: curWeek, template: applyTpl }),
+      body: JSON.stringify({ template_id: v.id, template: applyTpl }),
     });
     const j = await r.json();
     setMsg(
@@ -137,13 +135,12 @@ export default function VorlagenClient() {
                   ? "bg-emerald-600 text-white"
                   : "bg-slate-800/50 text-slate-400 hover:bg-slate-800"
               }`}
-              title={`Als Template ${t} einplanen (Woche ${curWeek})`}
+              title={`Als Template ${t} einplanen`}
             >
               {t}
             </button>
           ))}
         </div>
-        <span className="text-xs text-slate-500">Woche {curWeek}</span>
       </div>
 
       {loading && <div className="text-sm text-slate-500 animate-pulse">Lade Vorlagen…</div>}

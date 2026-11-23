@@ -20,7 +20,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const raw = await readJson(req);
-  if (raw === null) return badJson;
+  if (raw === null) return badJson();
   const { password } = raw as { password?: string };
   if (!password || password.length < 4)
     return NextResponse.json({ error: "Passwort zu kurz (min. 4 Zeichen)" }, { status: 400 });

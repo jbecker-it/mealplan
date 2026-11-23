@@ -1,101 +1,52 @@
-import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { generatePlan } from "@/lib/engine";
-import { currentWeekKey } from "@/lib/week";
+import { readJson, badJson } from "@/lib/body";
+import { generateTemplate } from "@/lib/engine";
+import { PLAN_KEY, Tpl, currentRows, loadPersons, loadRecipeOpts, setMeal, snapshot } from "@/lib/plan";
 
-// Wochenplan generieren: 2 Templates (A und B), je EIN Tag, der innerhalb
-// des Templates an allen 7 Tagen identisch gilt.
-// Beide Templates werden in die GLEICHE Woche geschrieben (Speicherschlüssel);
-// das Template ist NICHT mehr wochenabhängig — die UI wählt das AKTIVE aus
-// (settings.active_template), nur das aktive landet in der Einkaufsliste.
-// {week?} optional — Standard: aktuelle Woche.
-export async function POST(req: Request) {
+// EIN Template (Standard: das aktive) neu generieren — das andere bleibt
+// unangetastet. Der bisherige Stand wird vorher als Snapshot gesichert
+// (Verlauf im Plan, wiederherstellbar).
+// Body: { template?: "A" | "B" }
+export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
-  let week = currentWeekKey();
-  try {
-    const body = await req.clone().json().catch(() => null);
-    if (body && typeof body.week === "string" && /^\d{4}-W\d{1,2}$/.test(body.week))
-      week = body.week;
-  } catch {
-    // Body optional
-  }
-  // Beide Templates in die GLEICHE Woche (Template ist nicht mehr wochenabhängig).
-  const aWeek = week;
-  const bWeek = week;
+  const body = await readJson(req);
+  if (body === null) return badJson();
+  const tpl: Tpl = body.template === "A" || body.template === "B" ? body.template : getActiveTemplate();
+  const other: Tpl = tpl === "A" ? "B" : "A";
 
-  const profiles = db
-    .prepare(
-      `SELECT id, kcal_target, p_target, c_target, f_target,
-              COALESCE(sugar_target, 0) AS sugar_target,
-              COALESCE(salt_target, 0) AS salt_target,
-              slot_split, tag_include, tag_exclude
-       FROM profile ORDER BY id`
-    )
-    .all() as Array<Record<string, unknown>>;
-  if (profiles.length < 2)
+  const persons = loadPersons();
+  if (persons.length < 2)
     return NextResponse.json(
       { error: "Mindestens zwei Profile mit Makro-Zielen werden benötigt." },
       { status: 400 }
     );
-  const parseSplit = (raw: unknown) => {
-    if (!raw) return null;
-    try {
-      const o = JSON.parse(String(raw)) as Record<string, unknown>;
-      return {
-        B: Number(o.B) || 0,
-        M: Number(o.M) || 0,
-        A: Number(o.A) || 0,
-        S: Number(o.S) || 0,
-      };
-    } catch {
-      return null;
-    }
-  };
-  const persons = profiles.map((p) => ({
-    id: Number(p.id),
-    K: Number(p.kcal_target) || 2000,
-    P: Number(p.p_target) || 80,
-    C: Number(p.c_target) || 180,
-    F: Number(p.f_target) || 70,
-    SuT: Number(p.sugar_target) || 0,
-    SaT: Number(p.salt_target) || 0,
-    slotK: parseSplit(p.slot_split),
-    inc: String(p.tag_include || "").split(",").map((s) => s.trim()).filter(Boolean),
-    exc: String(p.tag_exclude || "").split(",").map((s) => s.trim()).filter(Boolean),
-  }));
-
-  const recs = db
-    .prepare(
-      `SELECT r.id, r.title, r.slots, r.kcal, r.protein_g, r.carbs_g, r.fat_g,
-              r.sugar_g, r.salt_g,
-              (SELECT group_concat(t.name, ',') FROM recipe_tag rt
-               JOIN tag t ON t.id = rt.tag_id WHERE rt.recipe_id = r.id) AS tags
-       FROM recipe r WHERE r.archived = 0 AND r.kcal IS NOT NULL`
-    )
-    .all() as Array<Record<string, unknown>>;
-  if (recs.length === 0)
+  const opts = loadRecipeOpts();
+  if (opts.length === 0)
     return NextResponse.json(
       { error: "Keine Rezepte vorhanden — zuerst Rezepte importieren oder anlegen." },
       { status: 400 }
     );
 
-  const opts = recs.map((r) => ({
-    id: Number(r.id),
-    title: String(r.title),
-    slots: String(r.slots || "B,M,A,S").split(",").map((s) => s.trim()).filter(Boolean),
-    kcal: Number(r.kcal) || 0,
-    p: Number(r.protein_g) || 0,
-    c: Number(r.carbs_g) || 0,
-    f: Number(r.fat_g) || 0,
-    Su: r.sugar_g == null ? null : Number(r.sugar_g),
-    Sa: r.salt_g == null ? null : Number(r.salt_g),
-  }));
+  // Rezepte des anderen Templates leicht meiden (Abwechslung)
+  const avoid = new Set(
+    (
+      db
+        .prepare("SELECT DISTINCT recipe_id FROM plan_meal WHERE week_key = ? AND template_id = ?")
+        .all(PLAN_KEY, other) as Array<{ recipe_id: number }>
+    ).map((r) => Number(r.recipe_id))
+  );
 
   let res;
   try {
-    res = generatePlan(persons, opts);
+    // Signatur des bisherigen Stands → möglichst eine andere Variante liefern
+    const prev = currentRows(tpl)
+      .map((r) => `${r.profile_id}${r.slot}${r.recipe_id}x${Number(r.servings)}`)
+      .sort()
+      .join(",");
+    res = generateTemplate(persons, opts, avoid, Date.now(), prev);
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Optimierung fehlgeschlagen" },
@@ -103,49 +54,18 @@ export async function POST(req: Request) {
     );
   }
 
-  // Beide Templates schreiben, je 7 identische Tage — A und B landen in
-  // derselben Woche; das AKTIVE Template wählt die UI (settings.active_template).
-  const upsert = db.prepare(
-    `INSERT INTO plan_meal(week_key, template_id, day, profile_id, slot, recipe_id, servings, kcal, p, c, f, sugar, salt)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-     ON CONFLICT(week_key, template_id, day, profile_id, slot) DO UPDATE SET
-       recipe_id = excluded.recipe_id, servings = excluded.servings,
-       kcal = excluded.kcal, p = excluded.p, c = excluded.c, f = excluded.f,
-       sugar = excluded.sugar, salt = excluded.salt`
-  );
-  // UNIQUE-Index für den ON-CONFLICT-Pfad sicherstellen
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_slot ON
-     plan_meal(week_key, template_id, day, profile_id, slot)`
-  );
-  const writeTemplate = (tid: "A" | "B", wk: string, dayPlan: typeof res.A) => {
-    for (let day = 0; day < 7; day++) {
-      for (const pd of dayPlan) {
-        for (const slot of ["B", "M", "A", "S"] as const) {
-          const ch = pd[slot];
-          upsert.run(
-            wk, tid, day, pd.profileId, slot, ch.recipe.id, ch.servings,
-            ch.recipe.kcal * ch.servings,
-            ch.recipe.p * ch.servings,
-            ch.recipe.c * ch.servings,
-            ch.recipe.f * ch.servings,
-            (ch.recipe.Su ?? 0) * ch.servings,
-            (ch.recipe.Sa ?? 0) * ch.servings
-          );
-        }
-      }
-    }
-  };
   db.transaction(() => {
-    writeTemplate("A", aWeek, res.A);
-    writeTemplate("B", bWeek, res.B);
+    snapshot(tpl, `Template ${tpl} vor Neu-Generierung`);
+    db.prepare("DELETE FROM plan_meal WHERE week_key = ? AND template_id = ?").run(PLAN_KEY, tpl);
+    for (const pd of res.days)
+      for (const slot of ["B", "M", "A", "S"] as const)
+        setMeal(tpl, pd.profileId, slot, pd[slot].recipe.id, pd[slot].servings);
   })();
 
   return NextResponse.json({
     ok: true,
-    week: aWeek,
-    weeks: { A: aWeek, B: bWeek },
+    template: tpl,
     ms: res.ms,
-    note: `Plan generiert (${res.ms} ms): Template A und B für Woche ${week} — das aktive Template wählst du im Plan.`,
+    note: `Template ${tpl} neu generiert (${res.ms} ms). Der vorherige Stand liegt im Verlauf.`,
   });
 }
