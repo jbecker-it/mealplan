@@ -100,3 +100,17 @@ fertig — der Rest ist im Git-Repo.
 - Port 3100 (via `MP_PORT=8080 bash install.sh` änderbar)
 - Logs: `logs/server.log`
 - Kein Root, kein Docker, keine Systemdienste nötig
+
+## Auf dem Handy
+
+Die Oberfläche ist für Handys optimiert: unten eine Tab-Leiste (Plan,
+Liste, Rezepte, REWE, Mehr), oben nur eine schmale Kopfzeile.
+
+**Als App auf den Startbildschirm** (Android/Chrome): Seite öffnen →
+Menü ⋮ → „Zum Startbildschirm hinzufügen“ bzw. „App installieren“.
+iPhone/Safari: Teilen → „Zum Home-Bildschirm“.
+
+Hinweis: Damit die App im Vollbild (ohne Browserleiste) startet und der
+Kochmodus das Display wach hält, braucht der Browser **HTTPS**. Über
+`http://<server-ip>:3100` legt Chrome nur eine Verknüpfung an. HTTPS im
+Heimnetz z. B. per Reverse-Proxy (Caddy) oder `tailscale serve`.

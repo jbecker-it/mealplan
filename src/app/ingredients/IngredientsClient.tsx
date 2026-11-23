@@ -173,7 +173,7 @@ export default function IngredientsClient() {
   const selCls = "rounded-lg border border-line bg-card px-2 py-1.5 text-sm outline-none focus:border-accent";
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-6">
+    <div className="mx-auto max-w-4xl">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-bold">Zutaten</h1>
         <span className="text-sm text-muted">{ings.length} Einträge</span>
@@ -376,7 +376,7 @@ export default function IngredientsClient() {
       {filtered.length === 0 && (
         <p className="text-sm text-muted">Keine Zutaten gefunden.</p>
       )}
-    </main>
+    </div>
   );
 }
 
