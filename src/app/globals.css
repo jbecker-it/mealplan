@@ -38,3 +38,32 @@ select,
 textarea {
   color-scheme: dark;
 }
+
+/* ---- Mobil: Safe-Areas (Notch / Gestenleiste) + Platz für die Tab-Leiste ---- */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* Tab-Leiste = 3.5rem + Safe-Area; Inhalt darf nicht darunter verschwinden */
+@utility pb-tabbar {
+  padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+}
+@utility mb-tabbar {
+  margin-bottom: calc(3.5rem + env(safe-area-inset-bottom));
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* iOS zoomt in Eingabefelder < 16px hinein — auf Touch-Geräten verhindern */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}

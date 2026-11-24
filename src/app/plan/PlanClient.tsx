@@ -416,7 +416,7 @@ export default function PlanClient() {
           {data.profiles.map((p) => {
             const tot = data.totals[String(p.id)];
             return (
-              <div key={p.id} className="overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
+              <div key={p.id} className="@container overflow-hidden rounded-xl border border-white/10 bg-slate-900/50">
                 <div className="border-b border-white/10 bg-slate-800/60 px-4 py-2.5">
                   <h3 className="font-semibold">{p.name}</h3>
                   <div
@@ -445,47 +445,60 @@ export default function PlanClient() {
                   {SLOT_ORDER.map((slot) => {
                     const r = cell(p.id, slot);
                     return (
-                      <div key={slot} className="flex items-center gap-3 px-4 py-2.5">
-                        <span className="w-20 shrink-0 text-[11px] uppercase tracking-wide text-slate-500">
-                          {SLOT_NAMES[slot]}
-                        </span>
+                      // Schmale Karte (Handy, 2-spaltig im Querformat): Name bekommt
+                      // eine eigene, umbrechende Zeile; Bedienelemente darunter.
+                      // Breite Karte (@xl): alles in einer Zeile wie bisher.
+                      <div key={slot} className="px-4 py-3 @xl:flex @xl:items-center @xl:gap-3 @xl:py-2.5">
+                        <div className="flex items-baseline justify-between @xl:contents">
+                          <span className="shrink-0 text-[11px] uppercase tracking-wide text-slate-500 @xl:w-20">
+                            {SLOT_NAMES[slot]}
+                          </span>
+                          {r && (
+                            <span className="whitespace-nowrap text-xs tabular-nums text-slate-400 @xl:hidden">
+                              {fmt(r.kcal, 1)} kcal
+                            </span>
+                          )}
+                        </div>
                         {r ? (
                           <>
                             <button
                               onClick={() => openSwap(slot, p.id, p.name)}
-                              className="min-w-0 flex-1 truncate text-left text-sm hover:text-emerald-400"
-                              title="Klicken zum Austauschen"
+                              className="mt-0.5 block w-full text-left text-base font-medium leading-snug hover:text-emerald-400 @xl:mt-0 @xl:w-auto @xl:min-w-0 @xl:flex-1 @xl:text-sm @xl:font-normal"
+                              title="Antippen zum Austauschen"
                             >
                               {r.title}
                             </button>
-                            <div className="flex gap-0.5">
-                              {SIZES.map((s) => (
-                                <button
-                                  key={s}
-                                  onClick={() => changeServings(p.id, slot, s)}
-                                  className={`rounded px-1.5 py-0.5 text-xs transition ${
-                                    r.servings === s
-                                      ? "bg-emerald-600 font-semibold text-white"
-                                      : "bg-slate-800 text-slate-400 hover:text-white"
-                                  }`}
-                                >
-                                  {s}×
-                                </button>
-                              ))}
+                            <div className="mt-2 flex items-center gap-1 @xl:mt-0 @xl:contents">
+                              <div className="flex gap-1 @xl:gap-0.5">
+                                {SIZES.map((s) => (
+                                  <button
+                                    key={s}
+                                    onClick={() => changeServings(p.id, slot, s)}
+                                    className={`rounded px-2.5 py-1 text-xs transition @xl:px-1.5 @xl:py-0.5 ${
+                                      r.servings === s
+                                        ? "bg-emerald-600 font-semibold text-white"
+                                        : "bg-slate-800 text-slate-400 hover:text-white"
+                                    }`}
+                                  >
+                                    {s}×
+                                  </button>
+                                ))}
+                              </div>
+                              <span className="hidden w-20 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-slate-400 @xl:inline">
+                                {fmt(r.kcal, 1)} kcal
+                              </span>
+                              <span className="flex-1 @xl:hidden" />
+                              <Link
+                                href={`/cook/${r.recipe_id}`}
+                                title="Kochmodus (Portionen frei wählbar)"
+                                className="shrink-0 rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:text-emerald-400 @xl:px-1.5 @xl:py-0.5 @xl:text-slate-400"
+                              >
+                                Kochen
+                              </Link>
                             </div>
-                            <span className="w-20 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-slate-400">
-                              {fmt(r.kcal, 1)} kcal
-                            </span>
-                            <Link
-                              href={`/cook/${r.recipe_id}`}
-                              title="Kochmodus (Portionen frei wählbar)"
-                              className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-400 hover:text-emerald-400"
-                            >
-                              Kochen
-                            </Link>
                           </>
                         ) : (
-                          <span className="flex-1 text-xs text-slate-600">— leer —</span>
+                          <span className="mt-0.5 block text-xs text-slate-600 @xl:mt-0 @xl:flex-1">— leer —</span>
                         )}
                       </div>
                     );
