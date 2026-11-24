@@ -195,6 +195,8 @@ function createDb(): DbInstance {
   addCol("ALTER TABLE plan_meal ADD COLUMN salt REAL DEFAULT 0");
   // Migration: settings.created_at (Cache-TTL, z. B. REWE-Discounts 24 h)
   addCol("ALTER TABLE settings ADD COLUMN created_at INTEGER");
+  // Migration: erlaubte Portionen pro Rezept (NULL = globale Vorgabe 0,5/1/1,5)
+  addCol("ALTER TABLE recipe ADD COLUMN servings_allowed TEXT");
   try {
     d.prepare("UPDATE settings SET created_at = ? WHERE created_at IS NULL").run(Date.now());
   } catch {

@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 import { upsertIngredient, upsertTag } from "@/lib/ingredients";
 import { normalizeAmount, parseAmount } from "@/lib/units";
+import { parseSizes, serializeSizes } from "@/lib/servings";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -38,6 +39,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   return NextResponse.json({
     ...rec,
     slots: String(rec.slots ?? "B,M,A,S").split(",").filter(Boolean),
+    servings_allowed: parseSizes(rec.servings_allowed),
     ingredients: ings,
     steps: steps.map((s) => s.text),
     tags: tags.map((t) => t.name),
@@ -66,6 +68,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         rid
       );
     }
+    // Erlaubte Portionen (leer/null = globale Vorgabe 0,5/1/1,5)
+    if (body.servings_allowed !== undefined)
+      db.prepare("UPDATE recipe SET servings_allowed = ? WHERE id = ?").run(serializeSizes(body.servings_allowed), rid);
     const fields: string[] = [];
     const vals: Array<string | number | null> = [];
     for (const k of ["title", "description"] as const) {

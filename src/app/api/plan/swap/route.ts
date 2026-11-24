@@ -3,11 +3,13 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 import { PLAN_KEY, setMeal } from "@/lib/plan";
+import { clampServings, parseSizes, sizesFor } from "@/lib/servings";
 
 // Mahlzeit austauschen / Portion ändern: neues Rezept + Portion für einen
 // Slot, gilt für alle 7 Tage des Templates.
 // Gemeinsame Slots (Mittag/Abend): das Partner-Profil bekommt dasselbe
-// Rezept mit seiner bisherigen Portion.
+// Rezept mit seiner bisherigen Portion (auf die nächste für das Rezept
+// erlaubte Größe gezogen).
 export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
@@ -30,11 +32,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Ungültige Portion" }, { status: 400 });
   const tpl = template === "A" || template === "B" ? template : "A";
   const rec = db
-    .prepare("SELECT id, title FROM recipe WHERE id = ? AND archived = 0")
-    .get(recipeId) as { id: number; title: string } | undefined;
+    .prepare("SELECT id, title, servings_allowed FROM recipe WHERE id = ? AND archived = 0")
+    .get(recipeId) as { id: number; title: string; servings_allowed: string | null } | undefined;
   if (!rec)
     return NextResponse.json({ error: "Rezept nicht gefunden" }, { status: 404 });
 
+  const sizes = sizesFor(parseSizes(rec.servings_allowed));
   db.transaction(() => {
     setMeal(tpl, Number(profileId), slot, rec.id, sv);
     if (slot === "M" || slot === "A") {
@@ -46,7 +49,7 @@ export async function POST(req: NextRequest) {
            WHERE p.id != ?`
         )
         .all(PLAN_KEY, tpl, slot, Number(profileId)) as Array<{ profile_id: number; servings: number | null }>;
-      for (const o of others) setMeal(tpl, o.profile_id, slot, rec.id, Number(o.servings) || 1);
+      for (const o of others) setMeal(tpl, o.profile_id, slot, rec.id, clampServings(Number(o.servings) || 1, sizes));
     }
   })();
 

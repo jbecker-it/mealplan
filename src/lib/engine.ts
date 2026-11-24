@@ -1,3 +1,4 @@
+import { clampServings, sizesFor } from "./servings";
 // Mealplan-Optimizer — 2x2-Template-Modell (Stand 2026-11-16)
 //
 // Ein Template = EINE Tag-Planung (4 Slots × 2 Profile), die innerhalb des
@@ -19,7 +20,10 @@
 //     Anteile) werden eingehalten — innerhalb ±25 % des Slot-Ziels sanft
 //     (SLOT_FIT), darüber hart (SLOT_HARD).
 //
-// Diskrete Portionen: 0.5, 1, 1.5. Deterministisch: feste Iterationsreihenfolge.
+// Diskrete Portionen: global 0.5, 1, 1.5 — pro Rezept überschreibbar
+// (recipe.servings_allowed, z. B. Waffeln nur 1/1.5/2). Bei gemeinsamen Slots
+// wird die Partner-Portion auf die nächstgelegene erlaubte Größe gezogen.
+// Deterministisch: feste Iterationsreihenfolge.
 
 export interface RecipeOpt {
   id: number;
@@ -32,6 +36,7 @@ export interface RecipeOpt {
   Su?: number | null; // Zucker g/Portion (best-effort-Makro)
   Sa?: number | null; // Salz g/Portion (best-effort-Makro)
   tags?: string[]; // Rezept-Tags (für Profil-Filter)
+  sizes?: number[]; // erlaubte Portionen (leer/fehlt = globale Vorgabe)
 }
 
 export interface Person {
@@ -61,7 +66,7 @@ export interface PersonDay {
   S: SlotChoice;
 }
 
-const SIZES = [0.5, 1, 1.5];
+const sz = (r: RecipeOpt) => sizesFor(r.sizes);
 const SLOTS = ["B", "M", "A", "S"] as const;
 type Slot = (typeof SLOTS)[number];
 
@@ -233,7 +238,7 @@ function candidates(
   // Slot-Ziel (über alle Portionen). Sonst fallen z. B. Pancakes (450 kcal Basis,
   // mit 1,5 Portion exakt 675 ≈ Ziel 670) aus dem Kandidaten-Pool.
   const tgt = slotTargetK(per, slot);
-  const fit = (r: RecipeOpt) => Math.min(...SIZES.map((s) => Math.abs(r.kcal * s - tgt)));
+  const fit = (r: RecipeOpt) => Math.min(...sz(r).map((s) => Math.abs(r.kcal * s - tgt)));
   out.sort((a, b) => fit(a) - fit(b));
   return out.slice(0, limit);
 }
@@ -254,9 +259,11 @@ function initial(persons: Person[], recs: RecipeOpt[], rnd: () => number = () =>
         // Gemeinsame Slots (Mittag/Abend): beide starten mit demselben Rezept
         const shared = persons.length === 2 && (slot === "M" || slot === "A");
         const r = Math.floor(rnd() * c.length);
+        const recipe = shared ? (i === 0 ? c[r] : days[0][slot].recipe) : c[(i + r) % c.length];
+        const sizes = sz(recipe);
         day[slot] = {
-          recipe: shared ? (i === 0 ? c[r] : days[0][slot].recipe) : c[(i + r) % c.length],
-          servings: SIZES[(i + SLOTS.indexOf(slot) + Math.floor(rnd() * 3)) % SIZES.length],
+          recipe,
+          servings: sizes[(i + SLOTS.indexOf(slot) + Math.floor(rnd() * 3)) % sizes.length],
         };
       }
     }
@@ -292,13 +299,14 @@ function optimize(
         const used = new Set<number>();
         for (const s of SLOTS) if (s !== slot) used.add(days[pi][s].recipe.id);
         const cands = candidates(recs, slot, per, used, 14);
+        const partnerCur = shared ? days[1 - pi][slot] : null;
         for (const rec of cands) {
-          for (const servings of SIZES) {
+          for (const servings of sz(rec)) {
             if (rec.id === cur.recipe.id && servings === cur.servings) continue;
             days[pi][slot] = { recipe: rec, servings };
             if (shared) {
               const partner = days[1 - pi];
-              partner[slot] = { recipe: rec, servings: partner[slot].servings };
+              partner[slot] = { recipe: rec, servings: clampServings(partnerCur!.servings, sz(rec)) };
             }
             const obj = totalObjective(days, persons, recs, recsA);
             if (obj < best - 1e-9) {
@@ -309,10 +317,7 @@ function optimize(
               break;
             }
             days[pi][slot] = { recipe: cur.recipe, servings: cur.servings };
-            if (shared) {
-              const partner = days[1 - pi];
-              partner[slot] = { recipe: cur.recipe, servings: partner[slot].servings };
-            }
+            if (shared) days[1 - pi][slot] = partnerCur!;
           }
         }
       }
@@ -332,22 +337,22 @@ function optimize(
           const sj = SLOTS[b];
           const curI = days[pi][si];
           const curJ = days[pi][sj];
+          const partI = sharedSlot(si) ? days[1 - pi][si] : null;
+          const partJ = sharedSlot(sj) ? days[1 - pi][sj] : null;
           const used = new Set<number>();
           for (const s of SLOTS) if (s !== si && s !== sj) used.add(days[pi][s].recipe.id);
           const cI = candidates(recs, si, per, used, 8);
           const cJ = candidates(recs, sj, per, used, 8);
           for (const recI of cI) {
-            for (const qI of SIZES) {
+            for (const qI of sz(recI)) {
               if (recI.id === curI.recipe.id && qI === curI.servings) continue;
               for (const recJ of cJ) {
-                for (const qJ of SIZES) {
+                for (const qJ of sz(recJ)) {
                   if (recJ.id === curJ.recipe.id && qJ === curJ.servings) continue;
                   days[pi][si] = { recipe: recI, servings: qI };
                   days[pi][sj] = { recipe: recJ, servings: qJ };
-                  if (sharedSlot(si))
-                    days[1 - pi][si] = { recipe: recI, servings: days[1 - pi][si].servings };
-                  if (sharedSlot(sj))
-                    days[1 - pi][sj] = { recipe: recJ, servings: days[1 - pi][sj].servings };
+                  if (partI) days[1 - pi][si] = { recipe: recI, servings: clampServings(partI.servings, sz(recI)) };
+                  if (partJ) days[1 - pi][sj] = { recipe: recJ, servings: clampServings(partJ.servings, sz(recJ)) };
                   const obj = totalObjective(days, persons, recs, recsA);
                   if (obj < pairBest) {
                     pairBest = obj;
@@ -356,10 +361,8 @@ function optimize(
                   // Rollback (inkl. Partner bei geteilten Slots)
                   days[pi][si] = { recipe: curI.recipe, servings: curI.servings };
                   days[pi][sj] = { recipe: curJ.recipe, servings: curJ.servings };
-                  if (sharedSlot(si))
-                    days[1 - pi][si] = { recipe: curI.recipe, servings: days[1 - pi][si].servings };
-                  if (sharedSlot(sj))
-                    days[1 - pi][sj] = { recipe: curJ.recipe, servings: days[1 - pi][sj].servings };
+                  if (partI) days[1 - pi][si] = partI;
+                  if (partJ) days[1 - pi][sj] = partJ;
                 }
               }
             }
@@ -371,9 +374,9 @@ function optimize(
         days[pi][si] = { recipe: ci, servings: qi };
         days[pi][sj] = { recipe: cj, servings: qj };
         if (sharedSlot(si))
-          days[1 - pi][si] = { recipe: ci, servings: days[1 - pi][si].servings };
+          days[1 - pi][si] = { recipe: ci, servings: clampServings(days[1 - pi][si].servings, sz(ci)) };
         if (sharedSlot(sj))
-          days[1 - pi][sj] = { recipe: cj, servings: days[1 - pi][sj].servings };
+          days[1 - pi][sj] = { recipe: cj, servings: clampServings(days[1 - pi][sj].servings, sz(cj)) };
         best = pairBest;
         improved = true;
       }
