@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
 import { upsertIngredient, upsertTag } from "@/lib/ingredients";
 import { normalizeAmount, parseAmount } from "@/lib/units";
+import { parseSizes, serializeSizes } from "@/lib/servings";
 
 interface NewIngredient {
   name?: string;
@@ -44,6 +45,7 @@ export async function GET(req: NextRequest) {
     rows.map((r) => ({
       ...r,
       slots: String(r.slots ?? "B,M,A,S").split(",").filter(Boolean),
+      servings_allowed: parseSizes(r.servings_allowed),
       tags: ((r.tags as string) || "").split("|").filter(Boolean),
     }))
   );
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest) {
     steps?: string[];
     tags?: string[];
     slots?: string[];
+    servings_allowed?: number[] | string | null;
   };
   if (!body.title?.trim())
     return NextResponse.json({ error: "Titel fehlt" }, { status: 400 });
@@ -79,7 +82,7 @@ export async function POST(req: NextRequest) {
     const id = Number(
       db
         .prepare(
-          "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, sugar_g, salt_g, favorite, slots) VALUES (?,?,?,?,?,?,?,?,?,?)"
+          "INSERT INTO recipe(title, description, kcal, protein_g, carbs_g, fat_g, sugar_g, salt_g, favorite, slots, servings_allowed) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
         )
         .run(
           body.title.trim(),
@@ -91,7 +94,8 @@ export async function POST(req: NextRequest) {
           num(body.sugar_g ?? body.sugar),
           num(body.salt_g ?? body.salt),
           body.favorite ? 1 : 0,
-          (body.slots?.length ? body.slots : ["B", "M", "A", "S"]).join(",")
+          (body.slots?.length ? body.slots : ["B", "M", "A", "S"]).join(","),
+          serializeSizes(body.servings_allowed)
         )
         .lastInsertRowid
     );

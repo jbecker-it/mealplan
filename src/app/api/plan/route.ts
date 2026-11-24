@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { PLAN_KEY } from "@/lib/plan";
+import { parseSizes } from "@/lib/servings";
 
 // Template A/B sind dauerhaft (keine Kalenderwochen, s. lib/plan.ts);
 // das aktive bestimmt die UI (settings).
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
   const rows = db
     .prepare(
       `SELECT pm.profile_id, pr.name AS profile_name, pm.slot, pm.recipe_id,
-              rm.title, rm.archived, pm.servings, pm.kcal, pm.p, pm.c, pm.f,
+              rm.title, rm.archived, rm.servings_allowed, pm.servings, pm.kcal, pm.p, pm.c, pm.f,
               COALESCE(pm.sugar, 0) AS sugar, COALESCE(pm.salt, 0) AS salt
        FROM plan_meal pm
        JOIN recipe rm ON rm.id = pm.recipe_id
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     template,
     day,
-    rows,
+    rows: rows.map((r) => ({ ...r, servings_allowed: parseSizes(r.servings_allowed) })),
     totals,
     profiles,
     hasPlan: rows.length > 0,

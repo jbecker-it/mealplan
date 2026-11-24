@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { UNITS, fmtQty } from "@/lib/units";
+import { DEFAULT_SIZES, SIZE_CHOICES } from "@/lib/servings";
 
 interface Rec {
   id: number;
@@ -16,8 +17,10 @@ interface Rec {
   favorite: number;
   tags: string[];
   slots: string[];
+  servings_allowed?: number[]; // leer = globale Vorgabe
 }
 
+const fmtSize = (n: number) => String(n).replace(".", ",");
 const SLOT_LABEL: Record<string, string> = { B: "Frühstück", M: "Mittag", A: "Abend", S: "Snack" };
 interface Ing {
   id: number;
@@ -324,6 +327,7 @@ function Detail({
   const [steps, setSteps] = useState("");
   const [tagSel, setTagSel] = useState<string[]>([]);
   const [slotSel, setSlotSel] = useState<string[]>(["B", "M", "A", "S"]);
+  const [sizeSel, setSizeSel] = useState<number[]>([]);
   const [ingList, setIngList] = useState<Ing[]>([]);
   const [msg, setMsg] = useState("");
   const firstLoad = useRef(true);
@@ -341,6 +345,7 @@ function Detail({
         setSteps(x.steps.join("\n"));
         setTagSel(x.tags || []);
         setSlotSel(x.slots?.length ? x.slots : ["B", "M", "A", "S"]);
+        setSizeSel(x.servings_allowed ?? []);
         // Neues, leeres Rezept beim ersten Öffnen direkt bearbeiten
         if (firstLoad.current && x.kcal == null && x.ingredients.length === 0) setEdit(true);
         firstLoad.current = false;
@@ -379,6 +384,7 @@ function Detail({
         steps: steps.split("\n").map((s) => s.trim()).filter(Boolean),
         tags: tagSel,
         slots: slotSel,
+        servings_allowed: sizeSel,
       }),
     });
     if (r.ok) {
@@ -436,6 +442,15 @@ function Detail({
                 <span key={t} className="rounded bg-card2 px-2 py-0.5 text-xs text-muted">#{t}</span>
               ))}
             </div>
+            {!!d.servings_allowed?.length && (
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-xs uppercase tracking-wide text-muted">Portionen:</span>
+                {d.servings_allowed.map((n) => (
+                  <span key={n} className="rounded bg-accent/15 px-2 py-0.5 text-xs text-accent">{fmtSize(n)}×</span>
+                ))}
+                <span className="text-xs text-muted">(statt Standard)</span>
+              </div>
+            )}
             <div>
               <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Zutaten (1 Portion)</h3>
               <ul className="space-y-0.5">
@@ -519,6 +534,19 @@ function Detail({
                 ))}
               </div>
               <p className="mt-1 text-xs text-muted">Nichts ausgewählt = Rezept darf in jedem Slot stehen.</p>
+            </div>
+            <div>
+              <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Erlaubte Portionen</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {SIZE_CHOICES.map((n) => (
+                  <button key={n} onClick={() => setSizeSel((s) => (s.includes(n) ? s.filter((x) => x !== n) : [...s, n].sort((a, b) => a - b)))} className={`rounded-lg px-2.5 py-1 text-sm tabular-nums ${sizeSel.includes(n) ? "bg-accent font-semibold text-background" : "bg-card2 text-muted"}`}>
+                    {fmtSize(n)}×
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                Nichts ausgewählt = Standard ({DEFAULT_SIZES.map(fmtSize).join(" / ")}). Sonst nutzt der Plan-Generator für dieses Rezept nur die gewählten Portionen — z. B. Waffeln (1 Portion = 2 Stück) nur 1× / 1,5× / 2×.
+              </p>
             </div>
             <button onClick={save} className="rounded-lg bg-accent px-5 py-2 font-semibold text-background hover:opacity-90">Speichern</button>
           </div>

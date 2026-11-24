@@ -8,6 +8,7 @@
 import { db } from "./db";
 import type { Person, RecipeOpt } from "./engine";
 import { profileTagNames } from "./ingredients";
+import { parseSizes } from "./servings";
 
 export const PLAN_KEY = "current";
 export type Tpl = "A" | "B";
@@ -137,7 +138,7 @@ export function loadRecipeOpts(): RecipeOpt[] {
   const recs = db
     .prepare(
       `SELECT r.id, r.title, r.slots, r.kcal, r.protein_g, r.carbs_g, r.fat_g,
-              r.sugar_g, r.salt_g,
+              r.sugar_g, r.salt_g, r.servings_allowed,
               (SELECT group_concat(t.name, '|') FROM recipe_tag rt
                JOIN tag t ON t.id = rt.tag_id WHERE rt.recipe_id = r.id) AS tags
        FROM recipe r WHERE r.archived = 0 AND r.kcal IS NOT NULL`
@@ -154,5 +155,6 @@ export function loadRecipeOpts(): RecipeOpt[] {
     Su: r.sugar_g == null ? null : Number(r.sugar_g),
     Sa: r.salt_g == null ? null : Number(r.salt_g),
     tags: String(r.tags || "").split("|").filter(Boolean),
+    sizes: parseSizes(r.servings_allowed),
   }));
 }

@@ -4,9 +4,11 @@ import { requireAuth } from "@/lib/auth";
 import { personObjective, MacroTotals, tagAllowed } from "@/lib/engine";
 import { PLAN_KEY } from "@/lib/plan";
 import { profileTagNames } from "@/lib/ingredients";
+import { clampServings, parseSizes, sizesFor } from "@/lib/servings";
 
 // Vorschläge für den Austausch einer Mahlzeit, sortiert nach „bestem Ersatz"
-// für genau diese Position: Jeder Kandidat (Rezept × Portion 0.5/1/1.5) wird
+// für genau diese Position: Jeder Kandidat (Rezept × erlaubte Portion, global 0.5/1/1.5
+// oder rezept-eigene Vorgabe) wird
 // in den aktuellen Tag eingesetzt und mit derselben Objective-Funktion
 // bewertet wie der Optimizer (KH/Fett hart, Protein am Ziel, Zucker/Salz
 // best-effort). Bei gemeinsamen Slots zählt zusätzlich die Bewertung des
@@ -82,7 +84,7 @@ export async function GET(req: NextRequest) {
   // Kandidaten-Rezepte: Slot erlaubt + Tag-Filter des Profils.
   const recs = db
     .prepare(
-      `SELECT r.id, r.title, r.slots, r.kcal, r.protein_g, r.carbs_g, r.fat_g, r.sugar_g, r.salt_g,
+      `SELECT r.id, r.title, r.slots, r.kcal, r.protein_g, r.carbs_g, r.fat_g, r.sugar_g, r.salt_g, r.servings_allowed,
               (SELECT group_concat(t.name, '|') FROM recipe_tag rt
                JOIN tag t ON t.id = rt.tag_id WHERE rt.recipe_id = r.id) AS tags
        FROM recipe r WHERE r.archived = 0 AND r.kcal IS NOT NULL`
@@ -100,7 +102,6 @@ export async function GET(req: NextRequest) {
   let cands = inSlot.filter((r) => filters.every((f) => tagAllowed(recTags(r), f.inc, f.exc, true)));
   if (!cands.length) cands = inSlot.filter((r) => filters.every((f) => tagAllowed(recTags(r), f.inc, f.exc, false)));
 
-  const SIZES = [0.5, 1, 1.5];
   interface Suggestion {
     id: number;
     title: string;
@@ -125,7 +126,10 @@ export async function GET(req: NextRequest) {
     const sa = Number(r.salt_g) || 0;
     let bestScore = Infinity;
     let bestServ = 1;
-    for (const sv of SIZES) {
+    const sizes = sizesFor(parseSizes(r.servings_allowed));
+    // Partner behält bei gemeinsamen Slots seine Portion (auf erlaubte Größe gezogen)
+    const svOther = curSlotOther ? clampServings(Number(curSlotOther.servings) || 1, sizes) : 1;
+    for (const sv of sizes) {
       const newMe: MacroTotals = {
         K: curTotalsMe.K - (Number(curSlotMe?.kcal) || 0) + kcal * sv,
         P: curTotalsMe.P - (Number(curSlotMe?.p) || 0) + p * sv,
@@ -137,12 +141,12 @@ export async function GET(req: NextRequest) {
       let score = personObjective(newMe, tMe);
       if (shared && curTotalsOther && curSlotOther) {
         const newOther: MacroTotals = {
-          K: curTotalsOther.K - (Number(curSlotOther.kcal) || 0) + kcal * sv,
-          P: curTotalsOther.P - (Number(curSlotOther.p) || 0) + p * sv,
-          C: curTotalsOther.C - (Number(curSlotOther.c) || 0) + c * sv,
-          F: curTotalsOther.F - (Number(curSlotOther.f) || 0) + f * sv,
-          Su: curTotalsOther.Su - (Number(curSlotOther.sugar) || 0) + su * sv,
-          Sa: curTotalsOther.Sa - (Number(curSlotOther.salt) || 0) + sa * sv,
+          K: curTotalsOther.K - (Number(curSlotOther.kcal) || 0) + kcal * svOther,
+          P: curTotalsOther.P - (Number(curSlotOther.p) || 0) + p * svOther,
+          C: curTotalsOther.C - (Number(curSlotOther.c) || 0) + c * svOther,
+          F: curTotalsOther.F - (Number(curSlotOther.f) || 0) + f * svOther,
+          Su: curTotalsOther.Su - (Number(curSlotOther.sugar) || 0) + su * svOther,
+          Sa: curTotalsOther.Sa - (Number(curSlotOther.salt) || 0) + sa * svOther,
         };
         score += personObjective(newOther, tOther!);
       }

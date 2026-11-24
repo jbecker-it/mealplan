@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { sizesFor } from "@/lib/servings";
 
 const SLOT_NAMES: Record<string, string> = {
   B: "Frühstück",
@@ -9,7 +10,6 @@ const SLOT_NAMES: Record<string, string> = {
   S: "Snack",
 };
 const SLOT_ORDER = ["B", "M", "A", "S"] as const;
-const SIZES = [0.5, 1, 1.5];
 
 interface Profile {
   id: number;
@@ -28,6 +28,7 @@ interface Row {
   recipe_id: number;
   title: string;
   servings: number;
+  servings_allowed?: number[]; // leer = globale Vorgabe
   kcal: number;
   p: number;
   c: number;
@@ -470,7 +471,7 @@ export default function PlanClient() {
                             </button>
                             <div className="mt-2 flex items-center gap-1 @xl:mt-0 @xl:contents">
                               <div className="flex gap-1 @xl:gap-0.5">
-                                {SIZES.map((s) => (
+                                {[...new Set([...sizesFor(r.servings_allowed), r.servings])].sort((a, b) => a - b).map((s) => (
                                   <button
                                     key={s}
                                     onClick={() => changeServings(p.id, slot, s)}
@@ -480,7 +481,7 @@ export default function PlanClient() {
                                         : "bg-slate-800 text-slate-400 hover:text-white"
                                     }`}
                                   >
-                                    {s}×
+                                    {String(s).replace(".", ",")}×
                                   </button>
                                 ))}
                               </div>
