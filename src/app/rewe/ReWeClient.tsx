@@ -30,9 +30,10 @@ type Ing = {
 type Offer = {
   title: string;
   brand: string | null;
+  subtitle: string | null;
   priceCents: number | null;
   imageURL: string | null;
-  loyaltyBonus: unknown;
+  loyaltyBonusCents: number | null;
 };
 type Status = {
   bridge: { available: boolean; live: boolean; reason?: string };
@@ -483,7 +484,15 @@ export default function ReWeClient() {
                   <div className="mb-2 h-24 w-full rounded-lg border border-dashed border-line" />
                 )}
                 <p className="line-clamp-2 text-xs">{o.title}</p>
+                {o.subtitle && (
+                  <p className="line-clamp-1 text-[11px] text-muted">{o.subtitle}</p>
+                )}
                 <p className="mt-1 text-sm font-semibold text-accent">{euro(o.priceCents)}</p>
+                {o.loyaltyBonusCents ? (
+                  <p className="text-[11px] text-muted">
+                    + {euro(o.loyaltyBonusCents)} Bonus
+                  </p>
+                ) : null}
               </div>
             ))}
           </div>

@@ -11,10 +11,12 @@ import {
 type Offer = {
   title: string;
   brand: string | null;
+  subtitle: string | null;
   priceCents: number | null;
+  priceRaw: string | null;
   articleNumber: string | null;
   imageURL: string | null;
-  loyaltyBonus: unknown;
+  loyaltyBonusCents: number | null;
   category: string | null;
 };
 
@@ -29,7 +31,9 @@ export async function GET() {
   if (!reweAvailable().available)
     return NextResponse.json({ error: "REWE-Brücke nicht verfügbar" }, { status: 503 });
 
-  const cacheKey = `rewe_discounts_${market.wwIdent}`;
+  // v2: Format korrigiert (Preis in Cent, Bild-URL) — alte Cache-Einträge
+  // mit falschen Preisen/ohne Bilder werden so ignoriert.
+  const cacheKey = `rewe_discounts_v2_${market.wwIdent}`;
   const cached = db
     .prepare("SELECT value, created_at FROM settings WHERE key = ?")
     .get(cacheKey) as { value: string; created_at: number } | undefined;
