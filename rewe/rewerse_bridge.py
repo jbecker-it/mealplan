@@ -158,18 +158,36 @@ def cmd_discounts(args):
     if not market:
         die("market fehlt")
     d = client.get_discounts(market)
-    # Angebote flach aus den Kategorien
+    # Angebote flach aus den Kategorien. Felder laut rewerse (Go-Struct
+    # Discount): price = Euro als float (nicht Cent!), images = Liste von
+    # URLs, articleNo, manufacturer, subtitle; Kategorie heißt "title".
+    # Dasselbe Angebot steht oft in mehreren Kategorien → per Artikel dedupen.
     offers = []
+    seen = set()
     for cat in d.get("categories") or []:
         for o in cat.get("offers") or []:
+            key = o.get("articleNo") or (o.get("title"), o.get("priceRaw"))
+            if key in seen:
+                continue
+            seen.add(key)
+            price = o.get("price")
+            price_cents = (
+                None
+                if o.get("priceParseFail") or not isinstance(price, (int, float))
+                else round(price * 100)
+            )
+            images = o.get("images") or []
+            bonus = o.get("loyaltyBonus")
             offers.append({
                 "title": o.get("title"),
-                "brand": o.get("manufacturer"),
-                "priceCents": o.get("price"),
-                "articleNumber": o.get("articleNumber"),
-                "imageURL": (o.get("image") or {}).get("url"),
-                "loyaltyBonus": o.get("loyaltyBonus"),
-                "category": cat.get("name"),
+                "subtitle": o.get("subtitle") or None,
+                "brand": o.get("manufacturer") or None,
+                "priceCents": price_cents,
+                "priceRaw": o.get("priceRaw") or None,
+                "articleNumber": o.get("articleNo") or None,
+                "imageURL": images[0] if images else None,
+                "loyaltyBonusCents": round(bonus * 100) if bonus else None,
+                "category": cat.get("title"),
             })
     out({"market": market, "count": len(offers), "offers": offers})
 
