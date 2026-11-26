@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, getActiveTemplate } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { readJson, badJson } from "@/lib/body";
-import { grammageToGrams, reweUrl } from "@/lib/rewe";
+import { grammageToGrams, reweProductUrl, reweUrl } from "@/lib/rewe";
 import { PLAN_KEY } from "@/lib/plan";
 import { roundAmount, toBaseUnit } from "@/lib/units";
 
@@ -153,6 +153,8 @@ export async function GET(req: NextRequest) {
       })),
       used_in: [...new Set(parts.flatMap((p) => [...p.usedIn]))].join(", "),
       checked: checkedSet.has(e.id),
+      // Shop-Link: Produktseite, ohne Zuordnung die Suche nach dem Zutatennamen
+      shop_url: e.rewe ? reweProductUrl(e.rewe.title, e.rewe.id) : reweUrl(e.name),
       rewe: e.rewe
         ? {
             productId: e.rewe.id,
@@ -162,7 +164,7 @@ export async function GET(req: NextRequest) {
             vegan: e.rewe.vegan,
             grammage: e.rewe.grammage,
             brand: e.rewe.brand,
-            url: reweUrl(e.rewe.title),
+            url: reweProductUrl(e.rewe.title, e.rewe.id),
             packs: cost?.packs ?? null,
             costCents: cost?.costCents ?? null,
           }

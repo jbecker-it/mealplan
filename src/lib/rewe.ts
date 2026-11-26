@@ -171,6 +171,31 @@ export function grammageToGrams(g: string | null | undefined): number | null {
   }
 }
 
-export function reweUrl(title: string): string {
-  return `https://www.rewe.de/search?q=${encodeURIComponent(title)}`;
+// Links in den REWE-Onlineshop. Eine öffentliche „Warenkorb per URL“-
+// Schnittstelle gibt es nicht — die Links führen zur Produktseite bzw. zur
+// Suche, dort legt man den Artikel selbst in den Warenkorb.
+
+/** „Alsan Bio Margarine 250g“ → „alsan-bio-margarine-250g“ */
+export function reweSlug(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** Produktseite, z. B. https://www.rewe.de/produkte/alsan-bio-margarine-250g/8882380 */
+export function reweProductUrl(title: string, productId: string): string {
+  const slug = reweSlug(title) || "produkt";
+  return `https://www.rewe.de/produkte/${slug}/${encodeURIComponent(productId)}`;
+}
+
+/** Produktsuche im Shop (für Zutaten ohne Zuordnung) */
+export function reweUrl(term: string): string {
+  return `https://www.rewe.de/suche/produkte?search=${encodeURIComponent(term)}`;
 }

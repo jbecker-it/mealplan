@@ -65,6 +65,12 @@ cd mealplan && git pull && bash install.sh
   (ohne „Bearbeiten“). **„Mit REWE sortieren“** schlägt für jede Zutat die
   Abteilung deines REWE-Markts vor (Kategorienbaum des Markts + Top-Treffer
   der Produktsuche) — übernommen wird nur, was du abhakst
+- **REWE-Warenkorb füllen**: Jede Zutat auf der Einkaufsliste hat einen
+  🛒-Knopf zur REWE-Produktseite (ohne Zuordnung: zur REWE-Suche), inkl.
+  Packungsanzahl. „Weiter in REWE“ öffnet immer die nächste offene Zutat und
+  hakt sie ab — so tippt man sich in ein paar Minuten durch die Liste.
+  (REWE bietet keine öffentliche Schnittstelle, um den Warenkorb direkt zu
+  befüllen; in den Warenkorb legt man im Shop selbst.)
 - Ein gemeinsames App-Passwort (1 Haushalt), Server-Sessions
 
 ## Rezept-Format (Text-Import)
