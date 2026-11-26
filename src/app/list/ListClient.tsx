@@ -24,6 +24,7 @@ interface Item {
   amounts: Array<{ qty: number | null; unit: string }>;
   used_in: string;
   checked: boolean;
+  shop_url: string;
   rewe: Rewe | null;
 }
 interface Group {
@@ -40,6 +41,9 @@ interface ListData {
 
 const euro = (cents: number) =>
   (cents / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+
+// Wie oft das Produkt in den Warenkorb muss (nur wenn die Packungsgröße bekannt ist)
+const packHint = (it: Item) => (it.rewe?.packs != null ? `${it.rewe.packs}×` : "");
 
 export default function ListClient() {
   const [data, setData] = useState<ListData | null>(null);
@@ -79,7 +83,17 @@ export default function ListClient() {
     load();
   }
 
+  // REWE-Shop öffnen und die Zutat dabei abhaken (= erledigt / im Warenkorb).
+  // Erst nach dem Klick abhaken: sonst rendert React den „Weiter“-Link schon
+  // auf die nächste Zutat um, bevor der Browser ihn öffnet.
+  function openedInRewe(it: Item) {
+    if (!it.checked) setTimeout(() => toggle(it), 0);
+  }
+
   if (!data) return <div className="py-20 text-center text-muted">Lade…</div>;
+
+  // Nächste offene Zutat in Listenreihenfolge — für „Weiter in REWE“
+  const next = data.groups.flatMap((g) => g.items).find((it) => !it.checked);
 
   return (
     <div>
@@ -107,6 +121,19 @@ export default function ListClient() {
           </Link>
         )}
         <span className="flex-1" />
+        {next && (
+          <a
+            href={next.shop_url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => openedInRewe(next)}
+            title="Öffnet die nächste offene Zutat im REWE-Shop und hakt sie ab"
+            className="max-w-full truncate rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-background transition hover:opacity-90"
+          >
+            🛒 Weiter in REWE: {next.name}
+            {packHint(next) && ` · ${packHint(next)}`}
+          </a>
+        )}
         {data.checkedCount > 0 && (
           <button onClick={resetChecks} className="rounded-lg bg-card px-3 py-1.5 text-sm text-muted hover:text-foreground">
             Haken zurücksetzen
@@ -187,6 +214,24 @@ export default function ListClient() {
                 <span className="hidden max-w-40 truncate text-xs text-muted/60 lg:inline" title={it.used_in}>
                   {it.used_in}
                 </span>
+                <a
+                  href={it.shop_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => openedInRewe(it)}
+                  title={
+                    it.rewe
+                      ? `Im REWE-Shop öffnen${packHint(it) ? ` (${packHint(it)} in den Warenkorb)` : ""} und abhaken`
+                      : "Im REWE-Shop nach dieser Zutat suchen und abhaken"
+                  }
+                  className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-medium tabular-nums transition ${
+                    it.checked
+                      ? "border-line text-muted/60 hover:text-foreground"
+                      : "border-accent/50 text-accent hover:bg-accent/10"
+                  }`}
+                >
+                  🛒{packHint(it) && ` ${packHint(it)}`}
+                </a>
               </li>
             ))}
           </ul>
