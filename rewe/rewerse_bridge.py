@@ -9,6 +9,8 @@ Befehle: status    {}
          search    {"market":"123","query":"hafer","vegan":true,"n":20,"page":1,"service":"PICKUP"}
          product   {"market":"123","id":"157910","service":"PICKUP"}
          discounts {"market":"123"}
+         shop_overview {"market":"123","plz":"35418"}
+         categorize {"market":"123","queries":["Haferflocken","Tofu"],"n":5}
 service weggelassen → automatisch PICKUP, dann DELIVERY (erster Treffer gewinnt).
 
 Ausgabe:  JSON auf stdout. Fehler: JSON auf stderr, Exit-Code != 0.
@@ -100,6 +102,7 @@ def slim_product(p: dict) -> dict:
         "isOrganic": bool(attrs.get("isOrganic")),
         "description": p.get("description"),
         "nutritionFacts": p.get("nutritionFacts"),
+        "categories": p.get("categories") or [],
     }
 
 
@@ -234,6 +237,68 @@ def cmd_refresh(args):
     })
 
 
+def _slim_category(c: dict, depth: int = 0) -> dict:
+    kids = (c.get("childCategories") or []) if depth < 10 else []
+    return {
+        "id": c.get("id"),
+        "name": c.get("name"),
+        "slug": c.get("slug"),
+        "tags": c.get("categoryTags") or [],
+        "children": [_slim_category(k, depth + 1) for k in kids],
+    }
+
+
+def cmd_shop_overview(args):
+    """Kategorienbaum (Marktabteilungen) des Online-Shops eines Markts.
+    Erst PICKUP, dann DELIVERY (braucht PLZ)."""
+    client = load_client()
+    market = args.get("market")
+    if not market:
+        die("market fehlt")
+    plz = args.get("plz") or ""
+    last = None
+    for st in ("PICKUP", "DELIVERY"):
+        try:
+            if st == "PICKUP":
+                ov = client.get_shop_overview(market, zip_code=plz) if plz else client.get_shop_overview(market)
+            else:
+                ov = client.get_shop_overview(market, service_type="DELIVERY", zip_code=plz or "67065")
+            cats = (ov or {}).get("productCategories") or (ov or {}).get("categories") or []
+            if cats:
+                out({"service": st, "categories": [_slim_category(c) for c in cats]})
+                return
+        except Exception as e:  # noqa: BLE001
+            last = e
+    die(f"Shop-Übersicht für Markt {market} nicht abrufbar: {last or 'keine Kategorien'}", 4)
+
+
+def cmd_categorize(args):
+    """Für jede Suchanfrage die Top-n-Produkte samt REWE-Kategorien liefern.
+    Die Zuordnung zur Marktabteilung macht der Server (Cache des Baums)."""
+    client = load_client()
+    market = args.get("market")
+    queries = args.get("queries") or []
+    n = int(args.get("n") or 5)
+    if not market or not queries:
+        die("market und queries fehlen")
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(q):
+        try:
+            res = _bridge_search(client, market, q, n, 1, False)
+            prods = [
+                {"title": p.get("title"), "categories": p.get("categories") or []}
+                for p in (res.get("products") or [])[:n]
+            ]
+            return {"query": q, "ok": True, "products": prods}
+        except Exception as e:  # noqa: BLE001
+            return {"query": q, "ok": False, "error": str(e), "products": []}
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        results = list(ex.map(one, queries))
+    out({"results": results})
+
+
 def _bridge_search(client, market, query, n, page, vegan):
     """Suche direkt via FFI (ServiceType-Tipp PICKUP→DELIVERY)."""
     from rewerse._ffi import call
@@ -268,6 +333,8 @@ def main() -> None:
         "product": cmd_product,
         "discounts": cmd_discounts,
         "refresh": cmd_refresh,
+        "shop_overview": cmd_shop_overview,
+        "categorize": cmd_categorize,
     }
     fn = handlers.get(cmd)
     if not fn:

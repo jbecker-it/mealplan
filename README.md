@@ -61,6 +61,10 @@ cd mealplan && git pull && bash install.sh
 - Portionsgrößen: 0.5 / 1 / 1.5 — keine freie Skalierung
 - **Einkaufsliste** aus dem Plan, Zutaten als einzigartige Entitäten
   (Kein Doppelzählen durch Alias-Auflösung)
+- **Zutaten-Kategorien** direkt in der Zutatenliste per Dropdown ändern
+  (ohne „Bearbeiten“). **„Mit REWE sortieren“** schlägt für jede Zutat die
+  Abteilung deines REWE-Markts vor (Kategorienbaum des Markts + Top-Treffer
+  der Produktsuche) — übernommen wird nur, was du abhakst
 - Ein gemeinsames App-Passwort (1 Haushalt), Server-Sessions
 
 ## Rezept-Format (Text-Import)
