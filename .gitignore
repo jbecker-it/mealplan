@@ -47,3 +47,5 @@ next-env.d.ts
 /logs
 .mealplan.pid
 .mealplan.env
+
+__pycache__/
